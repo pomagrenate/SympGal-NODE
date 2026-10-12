@@ -16,16 +16,21 @@ class MotherStarConfig:
     mass: float = 1.0
     position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     velocity: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    spin: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.1])  # Intrinsic spin S_j in R^3
     radius: float = 0.02
 
 
 @dataclass
 class PotentialConfig:
-    """Configuration for the effective curved spacetime potential."""
+    """Configuration for the effective curved spacetime potential and dissipative forces."""
     G: float = 1.0                     # Gravitational constant in N-body units
-    c: float = 50.0                    # Speed of light in N-body units (for 1PN corrections)
+    c: float = 50.0                    # Speed of light in N-body units (for 1PN / 1.5PN)
     softening: float = 0.05            # Gravitational softening length epsilon
     use_1pn: bool = True               # Enable first Post-Newtonian corrections
+    use_1_5pn: bool = True             # Enable 1.5PN Lense-Thirring gravitomagnetic spin-orbit acceleration
+    enable_dynamical_friction: bool = True  # Enable Chandrasekhar dynamical friction on mother stars
+    coulomb_log: float = 3.5           # Coulomb logarithm ln(Lambda)
+    df_sigma_v: float = 0.5            # Background velocity dispersion sigma_v for dynamical friction
     plummer_mass: float = 0.5          # Background cluster mass (Plummer sphere)
     plummer_scale: float = 2.5         # Plummer scale radius b
     miyamoto_a: float = 0.0            # Miyamoto-Nagai radial scale a (0 = Plummer)
@@ -34,7 +39,7 @@ class PotentialConfig:
 
 @dataclass
 class SwarmConfig:
-    """Configuration for child stars / test particles."""
+    """Configuration for child stars / test particles and central binary elements."""
     n_particles: int = 2000            # Total number of test particles in swarm
     cluster_radius: float = 1.2        # Initial spatial dispersion radius
     velocity_dispersion: float = 0.25  # Maxwell-Boltzmann velocity dispersion
@@ -44,6 +49,9 @@ class SwarmConfig:
     r_tidal: float = 5.0               # Tidal escape boundary radius
     collision_radius: float = 0.03     # Physical collision capture radius with mother stars
     seed: int = 42                     # RNG seed for reproducibility
+    binary_semi_major_axis: float = 1.0  # Semi-major axis a of central binary
+    binary_eccentricity: float = 0.0    # Orbital eccentricity e in [0.0, 0.85]
+    binary_mass_ratio: float = 1.0      # Mass ratio q = M2 / M1
 
 
 @dataclass

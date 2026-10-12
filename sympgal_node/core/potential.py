@@ -26,10 +26,55 @@ class RelativisticClusterPotential:
         self.c = self.config.c
         self.eps = self.config.softening
         self.use_1pn = self.config.use_1pn
+        self.use_1_5pn = self.config.use_1_5pn
+        self.enable_dynamical_friction = self.config.enable_dynamical_friction
+        self.coulomb_log = self.config.coulomb_log
+        self.df_sigma_v = self.config.df_sigma_v
         self.plummer_mass = self.config.plummer_mass
         self.plummer_scale = self.config.plummer_scale
         self.miyamoto_a = self.config.miyamoto_a
         self.miyamoto_b = self.config.miyamoto_b
+
+    def background_density(self, q: torch.Tensor) -> torch.Tensor:
+        """
+        Evaluate background Plummer sphere mass density at positions q (shape K, 3 or N, 3):
+        rho(r) = (3 * M0 / (4 * pi * b^3)) * (1 + r^2 / b^2)^(-5/2).
+        Returns shape (K, 1) or (N, 1).
+        """
+        r_sq = torch.sum(q**2, dim=-1, keepdim=True)
+        b = self.plummer_scale
+        rho_0 = (3.0 * self.plummer_mass) / (4.0 * np.pi * (b**3))
+        factor = (1.0 + r_sq / (b**2)) ** (-2.5)
+        return rho_0 * factor
+
+    def compute_dynamical_friction(
+        self, q_mothers: torch.Tensor, p_mothers: torch.Tensor, m_mothers: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Chandrasekhar dynamical friction deceleration on K mother stars:
+        a_{df, j} = - 4 * pi * G^2 * M_j * rho_{bg}(q_j) * ln(Lambda) *
+                    [ erf(X_j) - 2 * X_j / sqrt(pi) * exp(-X_j^2) ] * (v_j / ||v_j||^3)
+        where X_j = ||v_j|| / (sqrt(2) * sigma_v), and v_j = p_j / M_j.
+        Returns acceleration of shape (K, 3).
+        """
+        if not self.enable_dynamical_friction:
+            return torch.zeros_like(q_mothers)
+
+        m = m_mothers.view(-1, 1)  # (K, 1)
+        v_vec = p_mothers / (m + 1e-12)  # (K, 3)
+        v = torch.norm(v_vec, dim=-1, keepdim=True)  # (K, 1)
+
+        rho = self.background_density(q_mothers)  # (K, 1)
+
+        X = v / (np.sqrt(2.0) * self.df_sigma_v + 1e-12)  # (K, 1)
+        two_over_sqrt_pi = 2.0 / np.sqrt(np.pi)
+        bracket = torch.erf(X) - (two_over_sqrt_pi * X * torch.exp(-(X**2)))
+
+        coeff = -4.0 * np.pi * (self.G**2) * m * rho * self.coulomb_log  # (K, 1)
+        v_denom = v**3 + 1e-7  # Regularized velocity denominator
+
+        a_df = coeff * (bracket / v_denom) * v_vec  # (K, 3)
+        return a_df
 
     def background_potential(self, q: torch.Tensor) -> torch.Tensor:
         """
@@ -100,6 +145,60 @@ class RelativisticClusterPotential:
         v_1pn_per_star = -factor * (l_rel_sq / r_cubed)  # (N, K)
 
         return torch.sum(v_1pn_per_star, dim=-1, keepdim=True)  # (N, 1)
+
+    def compute_lense_thirring_acceleration(
+        self,
+        q: torch.Tensor,
+        p: torch.Tensor,
+        q_mothers: torch.Tensor,
+        p_mothers: torch.Tensor,
+        m_mothers: torch.Tensor,
+        spins_mothers: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        1.5PN Lense-Thirring gravitomagnetic spin-orbit acceleration on N test particles:
+        a_{LT, j} = (G / (c^2 ||r_ij||^3)) * [ (3 * (r_ij . S_j) / ||r_ij||^2) * (r_ij x v_ij) + 2 * (v_ij x S_j) ]
+        where r_ij = q_i - q_j, v_ij = p_i - p_j / M_j.
+        Returns shape (N, 3).
+        """
+        if not self.use_1_5pn or self.c <= 0.0 or spins_mothers is None:
+            return torch.zeros_like(q)
+
+        # r_ij: (N, K, 3)
+        r_ij = q.unsqueeze(1) - q_mothers.unsqueeze(0)
+        # v_ij: (N, K, 3)
+        v_mothers = p_mothers / (m_mothers.view(-1, 1) + 1e-12)
+        v_ij = p.unsqueeze(1) - v_mothers.unsqueeze(0)
+
+        # Distance quantities
+        r_sq = torch.sum(r_ij**2, dim=-1, keepdim=True) + self.eps**2  # (N, K, 1)
+        r_norm = torch.sqrt(r_sq)  # (N, K, 1)
+        r_cubed = r_sq * r_norm  # (N, K, 1)
+
+        # S_j: (1, K, 3)
+        S = spins_mothers.unsqueeze(0)
+
+        # r_ij . S_j: (N, K, 1)
+        r_dot_S = torch.sum(r_ij * S, dim=-1, keepdim=True)
+
+        # r_ij x v_ij: (N, K, 3)
+        r_cross_v = torch.cross(r_ij, v_ij, dim=-1)
+
+        # v_ij x S_j: (N, K, 3)
+        v_cross_S = torch.cross(v_ij, S.expand(q.shape[0], -1, -1), dim=-1)
+
+        # Term 1: 3 * (r_ij . S_j) * (r_ij x v_ij) / r_sq
+        term1 = (3.0 * r_dot_S / r_sq) * r_cross_v  # (N, K, 3)
+
+        # Term 2: 2 * (v_ij x S_j)
+        term2 = 2.0 * v_cross_S  # (N, K, 3)
+
+        # Prefactor: G / (c^2 * r^3)
+        prefactor = self.G / ((self.c**2) * r_cubed)  # (N, K, 1)
+
+        a_LT_per_mother = prefactor * (term1 + term2)  # (N, K, 3)
+
+        return torch.sum(a_LT_per_mother, dim=1)  # (N, 3)
 
     def effective_potential(
         self,

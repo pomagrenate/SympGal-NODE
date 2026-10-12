@@ -163,3 +163,74 @@ def test_hamiltonian_node():
     q_traj, p_traj = node.integrate(q0, p0, t_span)
     assert q_traj.shape == (10, 10, 3)
     assert p_traj.shape == (10, 10, 3)
+
+
+def test_eccentric_binary_periastron():
+    """Verify that eccentric binary initial separation matches exact periastron r_peri = a * (1 - e)."""
+    cfg = SympGalConfig()
+    a_val = 1.5
+    e_val = 0.6
+    cfg.swarm.binary_semi_major_axis = a_val
+    cfg.swarm.binary_eccentricity = e_val
+
+    cluster = StellarCluster(cfg)
+    _, mothers = cluster.get_states()
+
+    q_m, _ = mothers.numpy()
+    # Separation between Star 1 and Star 2
+    actual_sep = np.linalg.norm(q_m[1] - q_m[0])
+    expected_sep = a_val * (1.0 - e_val)  # 1.5 * 0.4 = 0.60
+
+    assert np.isclose(actual_sep, expected_sep, atol=1e-5), (
+        f"Expected periastron separation {expected_sep}, got {actual_sep}"
+    )
+
+
+def test_dynamical_friction_deceleration_and_work():
+    """Verify that Chandrasekhar dynamical friction opposes velocity and produces negative work."""
+    cfg = PotentialConfig(enable_dynamical_friction=True, coulomb_log=4.0, df_sigma_v=0.5)
+    pot = RelativisticClusterPotential(cfg)
+
+    # Mother star moving at velocity [0.5, 0.0, 0.0] through the Plummer cluster
+    q_m = torch.tensor([[0.2, 0.0, 0.0]], dtype=torch.float32)
+    v_m = torch.tensor([[0.5, 0.0, 0.0]], dtype=torch.float32)
+    m_m = torch.tensor([[1.0]], dtype=torch.float32)
+    p_m = m_m * v_m
+
+    a_df = pot.compute_dynamical_friction(q_m, p_m, m_m)
+
+    # Deceleration must oppose the velocity vector: a_df . v < 0
+    dot_product = torch.sum(a_df * v_m).item()
+    assert dot_product < 0.0, f"Dynamical friction must oppose velocity, got dot product {dot_product}"
+    assert a_df[0, 0].item() < 0.0, "Deceleration must be in the negative X direction"
+
+    # Test work done in SymplecticEngine
+    engine = SymplecticEngine(pot)
+    _, dW = engine._apply_dynamical_friction_half_step(q_m, p_m, m_m, dt=0.01)
+    assert dW < 0.0, f"Work done by dynamical friction must be negative (dissipative), got {dW}"
+
+
+def test_lense_thirring_inclined_orbit_torque():
+    """Verify that 1.5PN Lense-Thirring gravitomagnetic acceleration induces out-of-plane deflection on inclined orbits."""
+    cfg = PotentialConfig(G=1.0, c=20.0, use_1_5pn=True)
+    pot = RelativisticClusterPotential(cfg)
+
+    # Central spinning mother star with spin along Z axis: S = [0, 0, 1.0]
+    q_m = torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float32)
+    p_m = torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float32)
+    m_m = torch.tensor([[2.0]], dtype=torch.float32)
+    spins_m = torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float32)
+
+    # Inclined test particle with position [1.0, 0.0, 0.5] and velocity [0.0, 1.0, 0.2]
+    q_part = torch.tensor([[1.0, 0.0, 0.5]], dtype=torch.float32)
+    p_part = torch.tensor([[0.0, 1.0, 0.2]], dtype=torch.float32)
+
+    a_lt = pot.compute_lense_thirring_acceleration(q_part, p_part, q_m, p_m, m_m, spins_m)
+
+    # 1.5PN gravitomagnetic acceleration must be non-zero
+    assert a_lt.shape == (1, 3)
+    assert torch.norm(a_lt).item() > 0.0, "Lense-Thirring acceleration must be non-zero"
+
+    # Must produce out-of-plane (Z-component) acceleration for inclined orbital velocity
+    assert abs(a_lt[0, 2].item()) > 1e-6, "Lense-Thirring must induce non-zero out-of-plane Z acceleration"
+

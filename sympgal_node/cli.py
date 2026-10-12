@@ -50,6 +50,13 @@ def cmd_init_swarm(args: argparse.Namespace) -> None:
     cfg.swarm.distribution = args.distribution
     cfg.swarm.velocity_dispersion = args.v_disp
     cfg.swarm.seed = args.seed
+    cfg.swarm.binary_eccentricity = getattr(args, "eccentricity", 0.0)
+    cfg.swarm.binary_semi_major_axis = getattr(args, "semi_major_axis", 1.0)
+
+    # Set spins on mother stars
+    spin_z = getattr(args, "spin_z", 0.1)
+    for m in cfg.mother_stars:
+        m.spin = [0.0, 0.0, spin_z]
 
     cluster = StellarCluster(cfg)
     swarm_state, mothers_state = cluster.get_states()
@@ -68,6 +75,7 @@ def cmd_init_swarm(args: argparse.Namespace) -> None:
             "mothers_q": mothers_state.q.cpu(),
             "mothers_p": mothers_state.p.cpu(),
             "mothers_masses": mothers_state.masses.cpu(),
+            "mothers_spins": mothers_state.spins.cpu(),
             "mothers_names": mothers_state.names,
         },
         out_path,
@@ -76,11 +84,12 @@ def cmd_init_swarm(args: argparse.Namespace) -> None:
     cfg.save_json(out_dir / "config.json")
     print(f"[+] Successfully generated swarm and saved checkpoint to: {out_path}")
     print(f"[+] Mother stars: {len(mothers_state.names)} ({', '.join(mothers_state.names)})")
+    print(f"[+] Central Binary: a={cfg.swarm.binary_semi_major_axis}, e={cfg.swarm.binary_eccentricity:.2f}")
     print(f"[+] Swarm distribution: {cfg.swarm.distribution.upper()}")
 
 
 def cmd_simulate(args: argparse.Namespace) -> None:
-    """Run symplectic simulation with 1PN corrections and escape detection."""
+    """Run symplectic simulation with 1PN, 1.5PN Lense-Thirring, and Dynamical Friction."""
     print(BANNER)
     print(f"[*] Starting symplectic integration...")
 
@@ -105,6 +114,7 @@ def cmd_simulate(args: argparse.Namespace) -> None:
             q=data["mothers_q"],
             p=data["mothers_p"],
             masses=data["mothers_masses"],
+            spins=data.get("mothers_spins", None),
             names=data["mothers_names"],
             device=args.device,
         )
@@ -118,6 +128,12 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         cfg.simulation.integrator = args.integrator
     cfg.simulation.device = args.device
     cfg.potential.use_1pn = not args.no_1pn
+    cfg.potential.use_1_5pn = not getattr(args, "no_1_5pn", False)
+    cfg.potential.enable_dynamical_friction = not getattr(args, "no_df", False)
+    if hasattr(args, "coulomb_log") and args.coulomb_log is not None:
+        cfg.potential.coulomb_log = args.coulomb_log
+    if hasattr(args, "df_sigma_v") and args.df_sigma_v is not None:
+        cfg.potential.df_sigma_v = args.df_sigma_v
 
     potential = RelativisticClusterPotential(cfg.potential)
     engine = SymplecticEngine(potential, cfg.simulation)
@@ -135,7 +151,8 @@ def cmd_simulate(args: argparse.Namespace) -> None:
 
     initial_energy = engine.compute_energy(swarm_state, mothers_state)
     print(f"[*] Simulation Horizon: T=[{t_start:.1f}, {t_end:.1f}], dt={dt}, Total Steps={n_steps}")
-    print(f"[*] Integrator: {cfg.simulation.integrator} | 1PN Relativistic Terms: {cfg.potential.use_1pn}")
+    print(f"[*] Integrator: {cfg.simulation.integrator} (Strang Operator Splitting for Dissipation)")
+    print(f"[*] Physics: 1PN={cfg.potential.use_1pn} | 1.5PN Lense-Thirring={cfg.potential.use_1_5pn} | DynFriction={cfg.potential.enable_dynamical_friction}")
     print(f"[*] Initial Total Hamiltonian Energy: {initial_energy:.6e}")
 
     # Track mother trajectory for orbital visualization
@@ -161,22 +178,24 @@ def cmd_simulate(args: argparse.Namespace) -> None:
         now = time.time()
         if now - last_print > 1.5 or step_idx == n_steps:
             progress = (step_idx / n_steps) * 100.0
-            cur_e = engine.compute_energy(swarm_state, mothers_state)
-            rel_err = abs((cur_e - initial_energy) / (initial_energy + 1e-12))
+            cur_tot_e = engine.compute_total_energy(swarm_state, mothers_state)
+            rel_err = abs((cur_tot_e - initial_energy) / (abs(initial_energy) + 1e-12))
             summary = detector.get_summary()
+            w_df = engine.total_dissipated_work
             print(
-                f"  [{progress:5.1f}%] t={curr_t:6.2f} | dE/E0={rel_err:.2e} | "
+                f"  [{progress:5.1f}%] t={curr_t:6.2f} | dE/E0={rel_err:.2e} | W_df={w_df:.3e} | "
                 f"Bound={summary['bound_count']} | Escaped={summary['ejected_count']} | Collided={summary['collided_count']}"
             )
             last_print = now
 
     elapsed = time.time() - start_wall_time
-    final_energy = engine.compute_energy(swarm_state, mothers_state)
-    total_dE = abs((final_energy - initial_energy) / (initial_energy + 1e-12))
+    final_tot_energy = engine.compute_total_energy(swarm_state, mothers_state)
+    total_dE = abs((final_tot_energy - initial_energy) / (abs(initial_energy) + 1e-12))
     summary = detector.get_summary()
 
     print(f"[+] Simulation Completed in {elapsed:.2f}s ({n_steps / max(elapsed, 1e-3):.1f} steps/s)")
-    print(f"[+] Final Energy Conservation Error: |dE/E0| = {total_dE:.4e}")
+    print(f"[+] Final Energy Conservation Error (Strang Bookkeeping): |dE/E0| = {total_dE:.4e}")
+    print(f"[+] Total Dynamical Friction Work Dissipated: W_df = {engine.total_dissipated_work:.4e}")
     print(f"[+] Final Swarm Survival: Bound {summary['bound_fraction']*100:.1f}%, Escaped {summary['escape_fraction']*100:.1f}%, Collided {summary['collision_fraction']*100:.1f}%")
 
     out_dir = Path(args.output_dir)
@@ -190,10 +209,12 @@ def cmd_simulate(args: argparse.Namespace) -> None:
             "swarm_final_p": swarm_state.p.cpu(),
             "mothers_final_q": mothers_state.q.cpu(),
             "mothers_final_p": mothers_state.p.cpu(),
+            "mothers_spins": mothers_state.spins.cpu(),
             "mothers_trajectory": np.stack(mother_traj_list, axis=0),
             "sample_child_trajectory": np.stack(sample_child_traj, axis=0),
             "escape_dataset": detector.export_dataset(),
             "summary": summary,
+            "total_dissipated_work": engine.total_dissipated_work,
         },
         out_path,
     )
@@ -443,11 +464,14 @@ def main() -> None:
     p_init.add_argument("--particles", "-n", type=int, default=2000, help="Number of child stars")
     p_init.add_argument("--distribution", "-d", type=str, default="plummer", choices=["plummer", "disk"], help="Spatial distribution")
     p_init.add_argument("--v-disp", type=float, default=0.25, help="Velocity dispersion")
+    p_init.add_argument("--eccentricity", "-e", type=float, default=0.0, help="Central binary orbital eccentricity e in [0.0, 0.85]")
+    p_init.add_argument("--semi-major-axis", "-a", type=float, default=1.0, help="Central binary semi-major axis a")
+    p_init.add_argument("--spin-z", type=float, default=0.1, help="Intrinsic spin S_z for mother stars")
     p_init.add_argument("--seed", type=int, default=42, help="RNG seed")
     p_init.add_argument("--output-dir", "-o", type=str, default="data", help="Output directory")
 
     # simulate
-    p_sim = subparsers.add_parser("simulate", help="Run symplectic simulation with 1PN corrections")
+    p_sim = subparsers.add_parser("simulate", help="Run symplectic simulation with 1PN, 1.5PN, and Dynamical Friction")
     p_sim.add_argument("--init-state", "-i", type=str, default="data/swarm_init.pt", help="Path to initial state")
     p_sim.add_argument("--particles", "-n", type=int, default=2000, help="Particle count if generating on fly")
     p_sim.add_argument("--t-end", "-t", type=float, default=20.0, help="End time")
@@ -455,6 +479,10 @@ def main() -> None:
     p_sim.add_argument("--integrator", type=str, default="leapfrog", choices=["leapfrog", "implicit_midpoint", "yoshida4"], help="Symplectic integrator")
     p_sim.add_argument("--device", type=str, default="cpu", help="Compute device ('cpu' or 'cuda')")
     p_sim.add_argument("--no-1pn", action="store_true", help="Disable 1PN relativistic corrections")
+    p_sim.add_argument("--no-1-5pn", action="store_true", help="Disable 1.5PN Lense-Thirring gravitomagnetic spin-orbit acceleration")
+    p_sim.add_argument("--no-df", action="store_true", help="Disable Chandrasekhar dynamical friction on mother stars")
+    p_sim.add_argument("--coulomb-log", type=float, default=3.5, help="Coulomb logarithm ln(Lambda) for dynamical friction")
+    p_sim.add_argument("--df-sigma-v", type=float, default=0.5, help="Background velocity dispersion sigma_v for dynamical friction")
     p_sim.add_argument("--output-dir", "-o", type=str, default="data", help="Output directory")
 
     # visualize-map

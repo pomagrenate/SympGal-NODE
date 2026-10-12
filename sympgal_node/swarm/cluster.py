@@ -36,19 +36,52 @@ class StellarCluster:
         mothers_cfg = self.config.mother_stars
         k = len(mothers_cfg)
 
-        q_list = [m.position for m in mothers_cfg]
-        p_list = [m.velocity for m in mothers_cfg]
+        # If exactly 2 mother stars, compute exact Keplerian orbital elements at periastron (nu = 0)
+        e = self.config.swarm.binary_eccentricity
+        a = self.config.swarm.binary_semi_major_axis
+        if k == 2 and (e > 0.0 or a != 1.0 or not hasattr(mothers_cfg[0], "custom_orbit")):
+            m1 = mothers_cfg[0].mass
+            m2 = mothers_cfg[1].mass
+            m_tot = m1 + m2
+            G = self.config.potential.G
+
+            # Periastron separation: r_peri = a * (1 - e)
+            r_peri = a * (1.0 - e)
+
+            # Vis-viva relative speed at periastron: v_peri = sqrt(G * M_tot * (1 + e) / (a * (1 - e)))
+            v_rel = np.sqrt(G * m_tot * (1.0 + e) / max(r_peri, 1e-6))
+
+            # Barycentric position and velocity
+            q_1 = [- (m2 / m_tot) * r_peri, 0.0, 0.0]
+            q_2 = [  (m1 / m_tot) * r_peri, 0.0, 0.0]
+
+            v_1 = [0.0, - (m2 / m_tot) * v_rel, 0.0]
+            v_2 = [0.0,   (m1 / m_tot) * v_rel, 0.0]
+
+            # Canonical momentum p = m * v
+            p_1 = [m1 * v_1[0], m1 * v_1[1], m1 * v_1[2]]
+            p_2 = [m2 * v_2[0], m2 * v_2[1], m2 * v_2[2]]
+
+            q_list = [q_1, q_2]
+            p_list = [p_1, p_2]
+        else:
+            q_list = [m.position for m in mothers_cfg]
+            p_list = [[m.mass * v for v in m.velocity] for m in mothers_cfg]
+
         mass_list = [m.mass for m in mothers_cfg]
+        spin_list = [getattr(m, "spin", [0.0, 0.0, 0.1]) for m in mothers_cfg]
         names = [m.name for m in mothers_cfg]
 
         q = torch.tensor(q_list, dtype=self.dtype, device=self.device)
         p = torch.tensor(p_list, dtype=self.dtype, device=self.device)
         masses = torch.tensor(mass_list, dtype=self.dtype, device=self.device).unsqueeze(1)
+        spins = torch.tensor(spin_list, dtype=self.dtype, device=self.device)
 
         state = PhaseSpaceState(
             q=q,
             p=p,
             masses=masses,
+            spins=spins,
             names=names,
             t=0.0,
             device=self.device,

@@ -19,6 +19,7 @@ class PhaseSpaceState:
         q: Union[torch.Tensor, np.ndarray],
         p: Union[torch.Tensor, np.ndarray],
         masses: Optional[Union[torch.Tensor, np.ndarray]] = None,
+        spins: Optional[Union[torch.Tensor, np.ndarray]] = None,
         names: Optional[list[str]] = None,
         t: float = 0.0,
         device: str = "cpu",
@@ -58,6 +59,15 @@ class PhaseSpaceState:
         else:
             self.masses = torch.ones((self.n_bodies, 1), device=self.device, dtype=self.dtype)
 
+        # Normalize spins
+        if spins is not None:
+            if isinstance(spins, np.ndarray):
+                self.spins = torch.from_numpy(spins).to(device=self.device, dtype=self.dtype)
+            else:
+                self.spins = spins.to(device=self.device, dtype=self.dtype)
+        else:
+            self.spins = torch.zeros((self.n_bodies, 3), device=self.device, dtype=self.dtype)
+
         self.names = names or [f"particle_{i}" for i in range(self.n_bodies)]
 
     def clone(self) -> PhaseSpaceState:
@@ -66,6 +76,7 @@ class PhaseSpaceState:
             q=self.q.clone(),
             p=self.p.clone(),
             masses=self.masses.clone(),
+            spins=self.spins.clone(),
             names=list(self.names),
             t=self.t,
             device=str(self.device),
@@ -80,6 +91,7 @@ class PhaseSpaceState:
             q=self.q.to(device=dev, dtype=dt),
             p=self.p.to(device=dev, dtype=dt),
             masses=self.masses.to(device=dev, dtype=dt),
+            spins=self.spins.to(device=dev, dtype=dt),
             names=list(self.names),
             t=self.t,
             device=str(dev),

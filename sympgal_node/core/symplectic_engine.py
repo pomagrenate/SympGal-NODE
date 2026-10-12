@@ -29,11 +29,35 @@ class SymplecticEngine:
         self.integrator_type = self.config.integrator.lower()
         self.device = torch.device(self.config.device)
         self.dtype = getattr(torch, self.config.dtype)
+        self.total_dissipated_work: float = 0.0
 
         # Yoshida 4th-order coefficients
         c_val = 2.0 ** (1.0 / 3.0)
         self.w1 = 1.0 / (2.0 - c_val)
         self.w0 = -c_val / (2.0 - c_val)
+
+    def _apply_dynamical_friction_half_step(
+        self,
+        q_m: torch.Tensor,
+        p_m: torch.Tensor,
+        m_m: torch.Tensor,
+        dt: float,
+    ) -> Tuple[torch.Tensor, float]:
+        """
+        Half-step dissipative kick on mother stars:
+        p_m <- p_m + 0.5 * dt * M_m * a_{df}
+        Returns (new_p_m, work_done).
+        """
+        if not self.potential.enable_dynamical_friction:
+            return p_m, 0.0
+
+        a_df = self.potential.compute_dynamical_friction(q_m, p_m, m_m)
+        delta_p = 0.5 * dt * (m_m.view(-1, 1) * a_df)
+        v_m = p_m / (m_m.view(-1, 1) + 1e-12)
+        work_done = float(torch.sum(delta_p * v_m).item())
+
+        p_m_new = p_m + delta_p
+        return p_m_new, work_done
 
     def _step_leapfrog(
         self,
@@ -42,15 +66,16 @@ class SymplecticEngine:
         q_m: torch.Tensor,
         p_m: torch.Tensor,
         m_m: torch.Tensor,
+        spins_m: Optional[torch.Tensor],
         dt: float,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Symplectic 2nd-order Leapfrog (Kick-Drift-Kick / Drift-Kick-Drift) step.
+        Symplectic 2nd-order Leapfrog step with conservative 1PN + 1.5PN Lense-Thirring terms.
         """
-        # 1. Mother stars update (Kick-Drift-Kick)
+        # 1. Mother stars update (Kick-Drift-Kick under mutual gravity)
         acc_m = self.potential.compute_mother_accelerations(q_m, p_m, m_m)
         p_m_half = p_m + 0.5 * dt * acc_m
-        q_m_next = q_m + dt * p_m_half
+        q_m_next = q_m + dt * (p_m_half / (m_m.view(-1, 1) + 1e-12))
         acc_m_next = self.potential.compute_mother_accelerations(q_m_next, p_m_half, m_m)
         p_m_next = p_m_half + 0.5 * dt * acc_m_next
 
@@ -58,13 +83,19 @@ class SymplecticEngine:
         dq_dt_0, dp_dt_0 = self.potential.compute_hamiltonian_derivatives(
             q, p, q_m, p_m, m_m
         )
-        p_half = p + 0.5 * dt * dp_dt_0
-        q_next = q + dt * (p_half)  # dominant canonical drift
+        a_lt_0 = self.potential.compute_lense_thirring_acceleration(
+            q, p, q_m, p_m, m_m, spins_m
+        )
+        p_half = p + 0.5 * dt * (dp_dt_0 + a_lt_0)
+        q_next = q + dt * (p_half)
 
         dq_dt_1, dp_dt_1 = self.potential.compute_hamiltonian_derivatives(
             q_next, p_half, q_m_next, p_m_next, m_m
         )
-        p_next = p_half + 0.5 * dt * dp_dt_1
+        a_lt_1 = self.potential.compute_lense_thirring_acceleration(
+            q_next, p_half, q_m_next, p_m_next, m_m, spins_m
+        )
+        p_next = p_half + 0.5 * dt * (dp_dt_1 + a_lt_1)
 
         return q_next, p_next, q_m_next, p_m_next
 
@@ -75,17 +106,17 @@ class SymplecticEngine:
         q_m: torch.Tensor,
         p_m: torch.Tensor,
         m_m: torch.Tensor,
+        spins_m: Optional[torch.Tensor],
         dt: float,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Implicit Midpoint integrator:
         Preserves the symplectic 2-form d(q) ^ d(p) exactly for non-separable Hamiltonians.
-        Solved using fixed-point Picard iteration.
         """
         # Advance mother stars
         acc_m = self.potential.compute_mother_accelerations(q_m, p_m, m_m)
         p_m_half = p_m + 0.5 * dt * acc_m
-        q_m_next = q_m + dt * p_m_half
+        q_m_next = q_m + dt * (p_m_half / (m_m.view(-1, 1) + 1e-12))
         acc_m_next = self.potential.compute_mother_accelerations(q_m_next, p_m_half, m_m)
         p_m_next = p_m_half + 0.5 * dt * acc_m_next
 
@@ -103,9 +134,12 @@ class SymplecticEngine:
             dq_dt, dp_dt = self.potential.compute_hamiltonian_derivatives(
                 q_mid, p_mid, q_m_mid, p_m_mid, m_m
             )
+            a_lt_mid = self.potential.compute_lense_thirring_acceleration(
+                q_mid, p_mid, q_m_mid, p_m_mid, m_m, spins_m
+            )
 
             q_candidate = q + dt * dq_dt
-            p_candidate = p + dt * dp_dt
+            p_candidate = p + dt * (dp_dt + a_lt_mid)
 
             err = torch.max(torch.abs(q_candidate - q_next)) + torch.max(
                 torch.abs(p_candidate - p_next)
@@ -125,17 +159,18 @@ class SymplecticEngine:
         q_m: torch.Tensor,
         p_m: torch.Tensor,
         m_m: torch.Tensor,
+        spins_m: Optional[torch.Tensor],
         dt: float,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         4th-order symplectic Yoshida integrator constructed by composition of leapfrog steps.
         """
         # Step 1: w1 * dt
-        q, p, q_m, p_m = self._step_leapfrog(q, p, q_m, p_m, m_m, self.w1 * dt)
+        q, p, q_m, p_m = self._step_leapfrog(q, p, q_m, p_m, m_m, spins_m, self.w1 * dt)
         # Step 2: w0 * dt
-        q, p, q_m, p_m = self._step_leapfrog(q, p, q_m, p_m, m_m, self.w0 * dt)
+        q, p, q_m, p_m = self._step_leapfrog(q, p, q_m, p_m, m_m, spins_m, self.w0 * dt)
         # Step 3: w1 * dt
-        q, p, q_m, p_m = self._step_leapfrog(q, p, q_m, p_m, m_m, self.w1 * dt)
+        q, p, q_m, p_m = self._step_leapfrog(q, p, q_m, p_m, m_m, spins_m, self.w1 * dt)
 
         return q, p, q_m, p_m
 
@@ -146,7 +181,8 @@ class SymplecticEngine:
         dt: Optional[float] = None,
     ) -> Tuple[PhaseSpaceState, PhaseSpaceState]:
         """
-        Advance both swarm particles and mother stars by one symplectic step dt.
+        Advance both swarm particles and mother stars by one time step dt
+        using Strang Operator Splitting for dissipative friction + symplectic flow.
         """
         step_dt = dt if dt is not None else self.dt
 
@@ -157,14 +193,28 @@ class SymplecticEngine:
         else:
             integrator_fn = self._step_leapfrog
 
-        q_next, p_next, qm_next, pm_next = integrator_fn(
+        # 1. Strang Splitting Half-Step: Dissipative Dynamical Friction Kick
+        p_m_half, w1 = self._apply_dynamical_friction_half_step(
+            mothers_state.q, mothers_state.p, mothers_state.masses, step_dt
+        )
+
+        # 2. Strang Splitting Full-Step: Conservative Relativistic Symplectic Step
+        q_next, p_next, qm_next, pm_mid = integrator_fn(
             swarm_state.q,
             swarm_state.p,
             mothers_state.q,
-            mothers_state.p,
+            p_m_half,
             mothers_state.masses,
+            mothers_state.spins,
             step_dt,
         )
+
+        # 3. Strang Splitting Half-Step: Dissipative Dynamical Friction Kick
+        pm_next, w2 = self._apply_dynamical_friction_half_step(
+            qm_next, pm_mid, mothers_state.masses, step_dt
+        )
+
+        self.total_dissipated_work += (w1 + w2)
 
         new_t = swarm_state.t + step_dt
         new_swarm = PhaseSpaceState(
@@ -180,6 +230,7 @@ class SymplecticEngine:
             q=qm_next,
             p=pm_next,
             masses=mothers_state.masses,
+            spins=mothers_state.spins,
             names=mothers_state.names,
             t=new_t,
             device=str(self.device),
@@ -203,3 +254,13 @@ class SymplecticEngine:
                 mothers_state.masses,
             )
             return float(torch.sum(H).item())
+
+    def compute_total_energy(
+        self, swarm_state: PhaseSpaceState, mothers_state: PhaseSpaceState
+    ) -> float:
+        """
+        Compute total energy accounting for work dissipated by dynamical friction:
+        E_total = E_canonical - W_df (where W_df <= 0, so -W_df >= 0 restores conserved total).
+        """
+        e_can = self.compute_energy(swarm_state, mothers_state)
+        return e_can - self.total_dissipated_work
