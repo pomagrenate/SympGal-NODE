@@ -234,3 +234,116 @@ def test_lense_thirring_inclined_orbit_torque():
     # Must produce out-of-plane (Z-component) acceleration for inclined orbital velocity
     assert abs(a_lt[0, 2].item()) > 1e-6, "Lense-Thirring must induce non-zero out-of-plane Z acceleration"
 
+
+def test_sympgal_net_architecture_and_forward():
+    """Verify SympGalNet forward pass, latent shape, and multi-task loss computation."""
+    from sympgal_node.models.sympgal_net import SympGalNet
+
+    cfg_model = SympGalConfig().model
+    model = SympGalNet(cfg_model)
+
+    N, K = 32, 2
+    q = torch.randn(N, 3)
+    p = torch.randn(N, 3)
+    qm = torch.randn(K, 3)
+    pm = torch.randn(K, 3)
+    mm = torch.tensor([[1.0], [1.0]])
+
+    out = model(q, p, qm, pm, mm)
+
+    assert "hazards" in out
+    assert "total_survival" in out
+    assert "expected_escape_times" in out
+    assert "expected_escape_time" in out
+    assert "risk_logits" in out
+    assert "risk_probabilities" in out
+    assert "latent_z" in out
+
+    assert out["latent_z"].shape == (N, cfg_model.hidden_dim)
+    assert out["risk_probabilities"].shape == (N, 3)
+    assert out["survival_curve"].shape == (N, cfg_model.hazard_bins)
+
+    # Verify probability distributions sum to 1.0
+    risk_sum = torch.sum(out["risk_probabilities"], dim=-1)
+    assert torch.allclose(risk_sum, torch.ones_like(risk_sum), atol=1e-5)
+
+    # Test loss function
+    event_times = torch.rand(N) * 20.0
+    status = torch.randint(0, 3, (N,))
+    loss_dict = model.survival_head.compute_loss(out["latent_z"], event_times, status)
+
+    assert "loss" in loss_dict
+    assert "surv_nll" in loss_dict
+    assert "clf_loss" in loss_dict
+    assert not torch.isnan(loss_dict["loss"])
+    assert loss_dict["loss"].item() > 0.0
+
+
+def test_symplectic_poincare_jump_determinant():
+    """Verify that LatentSymplecticPoincareJump preserves volume with det(J) == 1.0."""
+    from sympgal_node.models.sympgal_net import LatentSymplecticPoincareJump
+    from sympgal_node.core.metrics import symplectic_volume_dissipation
+
+    latent_dim = 64
+    jump_op = LatentSymplecticPoincareJump(latent_dim=latent_dim)
+
+    # Check via automatic differentiation
+    max_dissipation = symplectic_volume_dissipation(jump_op, latent_dim=latent_dim, num_samples=10)
+    assert max_dissipation < 1e-4, f"Symplectic jump must preserve volume |det(J) - 1.0| < 1e-4, got {max_dissipation}"
+
+
+def test_scientific_metrics_zero_on_ground_truth_and_catches_degraded():
+    """Verify metrics return ideal values on perfect dummy data and catch degraded predictions."""
+    from sympgal_node.core.metrics import (
+        concordance_index,
+        integrated_brier_score,
+        regression_metrics,
+        population_distribution_metrics,
+        classification_metrics,
+    )
+
+    N = 100
+    K = 20
+    # Ground truth
+    true_times = torch.linspace(1.0, 20.0, N)
+    is_event = torch.ones(N)
+
+    # Perfect predictions: identical order
+    perfect_c_index = concordance_index(true_times, true_times, is_event)
+    assert np.isclose(perfect_c_index, 1.0), f"Expected perfect C-index 1.0, got {perfect_c_index}"
+
+    # Degraded / reversed predictions: C-index should collapse near 0.0
+    reversed_times = torch.flip(true_times, dims=[0])
+    degraded_c_index = concordance_index(true_times, reversed_times, is_event)
+    assert degraded_c_index < 0.1, f"Expected collapsed C-index < 0.1, got {degraded_c_index}"
+
+    # Regression MAE / RMSE
+    perf_reg = regression_metrics(true_times, true_times, is_event.bool())
+    assert np.isclose(perf_reg["mae_log10"], 0.0, atol=1e-6)
+    assert np.isclose(perf_reg["rmse_log10"], 0.0, atol=1e-6)
+
+    bad_reg = regression_metrics(true_times, true_times * 10.0, is_event.bool())
+    assert bad_reg["mae_log10"] > 0.5, "MAE on log10 must catch systematic degradation"
+
+    # Population macroscopic metrics
+    time_bins = torch.linspace(0.0, 20.0, K)
+    curve_a = torch.linspace(1.0, 0.0, K)
+    perf_pop = population_distribution_metrics(curve_a, curve_a, time_bins)
+    assert np.isclose(perf_pop["wasserstein_distance"], 0.0, atol=1e-6)
+    assert np.isclose(perf_pop["ks_statistic"], 0.0, atol=1e-6)
+
+    curve_b = torch.linspace(0.0, 1.0, K)
+    bad_pop = population_distribution_metrics(curve_a, curve_b, time_bins)
+    assert bad_pop["ks_statistic"] > 0.5, "KS test must catch opposing survival curves"
+
+    # Classification metrics
+    labels = torch.randint(0, 3, (N,))
+    one_hot = torch.nn.functional.one_hot(labels, num_classes=3).float()
+    perf_cls = classification_metrics(labels, one_hot, num_classes=3)
+    assert np.isclose(perf_cls["macro_f1"], 1.0), f"Perfect classification must have macro F1 = 1.0, got {perf_cls['macro_f1']}"
+
+    # Degraded classification (random or flipped)
+    flipped_labels = (labels + 1) % 3
+    bad_cls = classification_metrics(labels, torch.nn.functional.one_hot(flipped_labels, num_classes=3).float(), num_classes=3)
+    assert np.isclose(bad_cls["macro_f1"], 0.0), f"Completely misclassified labels must have macro F1 = 0.0, got {bad_cls['macro_f1']}"
+

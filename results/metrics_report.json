@@ -1,0 +1,57 @@
+{
+  "survival_metrics": {
+    "c_index": 0.5944364625407755,
+    "integrated_brier_score": 0.17391575872898102,
+    "mae_log10_escape_time": 0.2286832630634308,
+    "rmse_log10_escape_time": 0.39703071117401123,
+    "mae_linear_escape_time": 3.3087005615234375
+  },
+  "physics_stability": {
+    "so3_rotational_invariance_error": 4.9981832006551485e-08,
+    "symplectic_volume_dissipation": 1.0728836059570312e-06
+  },
+  "population_macroscopic": {
+    "wasserstein_distance": 0.4852909945249559,
+    "kolmogorov_smirnov_statistic": 0.055332898616790804
+  },
+  "classification_metrics": {
+    "confusion_matrix": [
+      [
+        29,
+        308,
+        0
+      ],
+      [
+        10,
+        533,
+        0
+      ],
+      [
+        0,
+        120,
+        0
+      ]
+    ],
+    "per_class": {
+      "Bound": {
+        "precision": 0.7435897435897436,
+        "recall": 0.08605341246290801,
+        "f1_score": 0.15425531914893617,
+        "support": 337
+      },
+      "Ejection": {
+        "precision": 0.554630593132154,
+        "recall": 0.9815837937384899,
+        "f1_score": 0.7087765957446808,
+        "support": 543
+      },
+      "Collision": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1_score": 0.0,
+        "support": 120
+      }
+    },
+    "macro_f1": 0.28767730496453897
+  }
+}

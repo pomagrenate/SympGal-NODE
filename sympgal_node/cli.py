@@ -25,6 +25,9 @@ from sympgal_node.visualization.potential_mesh import TrampolineMeshVisualizer
 from sympgal_node.models.equivariant_gnn import EquivariantSwarmGNN
 from sympgal_node.models.survival_head import SurvivalHead
 from sympgal_node.models.neural_ode import SymplecticHamiltonianNODE
+from sympgal_node.models.sympgal_net import SympGalNet
+from sympgal_node.core.metrics import ScientificEvaluationEngine
+import json
 
 
 BANNER = r"""
@@ -326,62 +329,114 @@ def cmd_train_model(args: argparse.Namespace) -> None:
     status = torch.tensor(esc_data["status"], dtype=torch.long, device=args.device)
     is_ejected = status == int(ParticleStatus.EJECTED)
 
-    # Instantiate Equivariant GNN + Survival Head
-    gnn = EquivariantSwarmGNN(cfg.model).to(args.device)
-    survival_head = SurvivalHead(
-        cfg.model, in_features=cfg.model.hidden_dim, t_max=cfg.simulation.t_end
-    ).to(args.device)
+    model_type = getattr(args, "model_type", "sympgal_net")
+    if model_type == "sympgal_net":
+        print(f"[*] Training Proprietary SympGal-Net (Encoder + Symplectic Jump + Multi-Risk Head)...")
+        model = SympGalNet(cfg.model).to(args.device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=cfg.model.weight_decay,
+        )
 
-    optimizer = torch.optim.AdamW(
-        list(gnn.parameters()) + list(survival_head.parameters()),
-        lr=args.lr,
-        weight_decay=cfg.model.weight_decay,
-    )
+        N = q0.shape[0]
+        for epoch in range(1, args.epochs + 1):
+            perm = torch.randperm(N)
+            epoch_loss = 0.0
+            n_batches = 0
 
-    print(f"[*] Training Equivariant GNN + Survival Head for {args.epochs} epochs (Batch Size={args.batch_size})...")
-    N = q0.shape[0]
-    indices = torch.arange(N)
+            for b_start in range(0, N, args.batch_size):
+                b_idx = perm[b_start : b_start + args.batch_size]
+                q_b = q0[b_idx]
+                p_b = p0[b_idx]
+                t_b = esc_times[b_idx]
+                status_b = status[b_idx]
 
-    for epoch in range(1, args.epochs + 1):
-        perm = torch.randperm(N)
-        epoch_loss = 0.0
-        n_batches = 0
+                z_enc = model.encoder(q_b, p_b, qm, pm, mm)
+                z_symp = model.poincare_jump(z_enc)
+                loss_dict = model.survival_head.compute_loss(z_symp, t_b, status_b)
+                loss = loss_dict["loss"]
 
-        for b_start in range(0, N, args.batch_size):
-            b_idx = perm[b_start : b_start + args.batch_size]
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            q_b = q0[b_idx]
-            p_b = p0[b_idx]
-            t_b = esc_times[b_idx]
-            ejected_b = is_ejected[b_idx]
+                epoch_loss += loss.item()
+                n_batches += 1
 
-            # Invariant embeddings
-            z_b = gnn(q_b, p_b, qm, pm, mm)
-            loss = survival_head.compute_loss(z_b, t_b, ejected_b)
+            avg_loss = epoch_loss / max(n_batches, 1)
+            if epoch % 5 == 0 or epoch == 1:
+                print(f"  [Epoch {epoch:3d}/{args.epochs}] SympGal-Net Multi-Task Loss: {avg_loss:.4f}")
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # Save model checkpoint
+        model_dir = Path(args.model_output).parent
+        model_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model_type": "sympgal_net",
+                "model_state": model.state_dict(),
+                "config": cfg.to_dict(),
+            },
+            args.model_output,
+        )
+        print(f"[+] SympGal-Net checkpoint saved to: {args.model_output}")
+    else:
+        # Instantiate Equivariant GNN + Survival Head
+        gnn = EquivariantSwarmGNN(cfg.model).to(args.device)
+        survival_head = SurvivalHead(
+            cfg.model, in_features=cfg.model.hidden_dim, t_max=cfg.simulation.t_end
+        ).to(args.device)
 
-            epoch_loss += loss.item()
-            n_batches += 1
+        optimizer = torch.optim.AdamW(
+            list(gnn.parameters()) + list(survival_head.parameters()),
+            lr=args.lr,
+            weight_decay=cfg.model.weight_decay,
+        )
 
-        avg_loss = epoch_loss / max(n_batches, 1)
-        if epoch % 5 == 0 or epoch == 1:
-            print(f"  [Epoch {epoch:3d}/{args.epochs}] Negative Log-Likelihood Loss: {avg_loss:.4f}")
+        print(f"[*] Training Equivariant GNN + Survival Head for {args.epochs} epochs (Batch Size={args.batch_size})...")
+        N = q0.shape[0]
 
-    # Save model checkpoint
-    model_dir = Path(args.model_output).parent
-    model_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "gnn_state": gnn.state_dict(),
-            "survival_head_state": survival_head.state_dict(),
-            "config": cfg.to_dict(),
-        },
-        args.model_output,
-    )
-    print(f"[+] Model checkpoint saved to: {args.model_output}")
+        for epoch in range(1, args.epochs + 1):
+            perm = torch.randperm(N)
+            epoch_loss = 0.0
+            n_batches = 0
+
+            for b_start in range(0, N, args.batch_size):
+                b_idx = perm[b_start : b_start + args.batch_size]
+
+                q_b = q0[b_idx]
+                p_b = p0[b_idx]
+                t_b = esc_times[b_idx]
+                ejected_b = is_ejected[b_idx]
+
+                # Invariant embeddings
+                z_b = gnn(q_b, p_b, qm, pm, mm)
+                loss = survival_head.compute_loss(z_b, t_b, ejected_b)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item()
+                n_batches += 1
+
+            avg_loss = epoch_loss / max(n_batches, 1)
+            if epoch % 5 == 0 or epoch == 1:
+                print(f"  [Epoch {epoch:3d}/{args.epochs}] Negative Log-Likelihood Loss: {avg_loss:.4f}")
+
+        # Save model checkpoint
+        model_dir = Path(args.model_output).parent
+        model_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model_type": "gnn",
+                "gnn_state": gnn.state_dict(),
+                "survival_head_state": survival_head.state_dict(),
+                "config": cfg.to_dict(),
+            },
+            args.model_output,
+        )
+        print(f"[+] Model checkpoint saved to: {args.model_output}")
 
 
 def cmd_predict_escape(args: argparse.Namespace) -> None:
@@ -395,16 +450,24 @@ def cmd_predict_escape(args: argparse.Namespace) -> None:
     print(f"[*] Loading model from {model_path}...")
     ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
     cfg = SympGalConfig.from_dict(ckpt["config"])
+    # Check model architecture
+    model_type = ckpt.get("model_type", "gnn" if "gnn_state" in ckpt else "sympgal_net")
+    if model_type == "sympgal_net":
+        model = SympGalNet(cfg.model)
+        model.load_state_dict(ckpt["model_state"])
+        model.eval()
+        is_sympgal = True
+    else:
+        gnn = EquivariantSwarmGNN(cfg.model)
+        gnn.load_state_dict(ckpt["gnn_state"])
+        gnn.eval()
 
-    gnn = EquivariantSwarmGNN(cfg.model)
-    gnn.load_state_dict(ckpt["gnn_state"])
-    gnn.eval()
-
-    survival_head = SurvivalHead(
-        cfg.model, in_features=cfg.model.hidden_dim, t_max=cfg.simulation.t_end
-    )
-    survival_head.load_state_dict(ckpt["survival_head_state"])
-    survival_head.eval()
+        survival_head = SurvivalHead(
+            cfg.model, in_features=cfg.model.hidden_dim, t_max=cfg.simulation.t_end
+        )
+        survival_head.load_state_dict(ckpt["survival_head_state"])
+        survival_head.eval()
+        is_sympgal = False
 
     # Load initial swarm or generate sample
     init_path = Path(args.init_state)
@@ -422,8 +485,15 @@ def cmd_predict_escape(args: argparse.Namespace) -> None:
         q, p, qm, pm, mm = sw.q, sw.p, mo.q, mo.p, mo.masses
 
     with torch.no_grad():
-        z = gnn(q, p, qm, pm, mm)
-        hazards, survival_curves, expected_times = survival_head(z)
+        if is_sympgal:
+            preds = model(q, p, qm, pm, mm)
+            survival_curves = preds["survival_curve"]
+            expected_times = preds["expected_escape_time"]
+            bin_centers = model.survival_head.bin_centers
+        else:
+            z = gnn(q, p, qm, pm, mm)
+            hazards, survival_curves, expected_times = survival_head(z)
+            bin_centers = survival_head.bin_centers
 
     surv_np = survival_curves.cpu().numpy()
     exp_times_np = expected_times.squeeze().cpu().numpy()
@@ -434,7 +504,7 @@ def cmd_predict_escape(args: argparse.Namespace) -> None:
 
     print(f"[+] Predicted Expected Escape Time (Median): {median_pred_time:.2f} [N-body units]")
     print(f"[+] Collective Swarm Survival Probability Curve:")
-    time_bins = survival_head.bin_centers.cpu().numpy()
+    time_bins = bin_centers.cpu().numpy()
     for t_val, s_val in zip(time_bins[::3], mean_survival[::3]):
         bar = "#" * int(s_val * 30)
         print(f"    t = {t_val:5.1f} | S(t) = {s_val:5.3f} | [{bar:<30}]")
@@ -449,6 +519,106 @@ def cmd_predict_escape(args: argparse.Namespace) -> None:
         predicted_escape_times=exp_times_np,
     )
     print(f"[+] Full predictions saved to: {out_path}")
+
+
+def cmd_evaluate_model(args: argparse.Namespace) -> None:
+    """Run comprehensive scientific evaluation benchmark on SympGal-Net."""
+    print(BANNER)
+    model_path = Path(args.model)
+    if not model_path.exists():
+        print(f"[-] Model checkpoint {model_path} not found. Run 'train-model' first.")
+        sys.exit(1)
+
+    test_data_path = Path(args.test_data)
+    if not test_data_path.exists():
+        print(f"[-] Test dataset {test_data_path} not found. Run 'simulate' first.")
+        sys.exit(1)
+
+    print(f"[*] Loading model from {model_path}...")
+    ckpt = torch.load(model_path, map_location=args.device, weights_only=False)
+    cfg = SympGalConfig.from_dict(ckpt["config"])
+
+    model_type = ckpt.get("model_type", "sympgal_net")
+    if model_type == "sympgal_net":
+        model = SympGalNet(cfg.model).to(args.device)
+        model.load_state_dict(ckpt["model_state"])
+    else:
+        print("[-] Evaluation engine currently requires SympGal-Net architecture.")
+        sys.exit(1)
+
+    model.eval()
+
+    print(f"[*] Loading evaluation test data from {test_data_path}...")
+    sim_data = torch.load(test_data_path, map_location=args.device, weights_only=False)
+
+    init_path = Path("data/swarm_init.pt")
+    if init_path.exists():
+        init_data = torch.load(init_path, map_location=args.device, weights_only=False)
+        q = init_data["swarm_q"].to(args.device)
+        p = init_data["swarm_p"].to(args.device)
+        qm = init_data["mothers_q"].to(args.device)
+        pm = init_data["mothers_p"].to(args.device)
+        mm = init_data["mothers_masses"].to(args.device)
+    else:
+        q = sim_data["swarm_final_q"].to(args.device)
+        p = sim_data["swarm_final_p"].to(args.device)
+        qm = sim_data["mothers_final_q"].to(args.device)
+        pm = sim_data["mothers_final_p"].to(args.device)
+        mm = torch.tensor([[m.mass] for m in cfg.mother_stars], dtype=q.dtype, device=args.device)
+
+    esc_data = sim_data["escape_dataset"]
+    true_times = torch.tensor(esc_data["escape_time"], dtype=torch.float32, device=args.device)
+    true_status = torch.tensor(esc_data["status"], dtype=torch.long, device=args.device)
+
+    time_bins = model.survival_head.bin_centers.to(args.device)
+
+    print("[*] Executing Scientific Evaluation Engine across test population...")
+    eval_engine = ScientificEvaluationEngine(model)
+    report = eval_engine.evaluate(
+        q=q,
+        p=p,
+        q_m=qm,
+        p_m=pm,
+        m_m=mm,
+        true_event_times=true_times,
+        true_terminal_status=true_status,
+        time_bins=time_bins,
+        n_rotations=args.n_rotations,
+    )
+
+    # Print Executive Summary Table
+    surv = report["survival_metrics"]
+    phys = report["physics_stability"]
+    pop = report["population_macroscopic"]
+    cls_rep = report["classification_metrics"]
+
+    print("\n" + "=" * 78)
+    print("                SYMPGAL-NET PUBLICATION BENCHMARK REPORT")
+    print("=" * 78)
+    print(f" {'Metric Category':<30} | {'Metric Name':<30} | {'Value':<12}")
+    c_idx_label = "Harrell's C-Index (>=0.5)"
+    print(f" {'Survival Discrimination':<30} | {c_idx_label:<30} | {surv['c_index']:<12.4f}")
+    print(f" {'Survival Calibration':<30} | {'Integrated Brier Score (IBS)':<30} | {surv['integrated_brier_score']:<12.4f}")
+    print(f" {'Regression Accuracy':<30} | {'MAE log10(T_esc)':<30} | {surv['mae_log10_escape_time']:<12.4f}")
+    print(f" {'Regression Accuracy':<30} | {'RMSE log10(T_esc)':<30} | {surv['rmse_log10_escape_time']:<12.4f}")
+    print(f" {'Symmetry Preservation':<30} | {'SO(3) Invariance Error':<30} | {phys['so3_rotational_invariance_error']:<12.2e}")
+    print(f" {'Symplectic Structure':<30} | {'|det(J) - 1.0| Dissipation':<30} | {phys['symplectic_volume_dissipation']:<12.2e}")
+    print(f" {'Macroscopic Alignment':<30} | {'Wasserstein Distance W_1':<30} | {pop['wasserstein_distance']:<12.4f}")
+    print(f" {'Macroscopic Alignment':<30} | {'Kolmogorov-Smirnov D_KS':<30} | {pop['kolmogorov_smirnov_statistic']:<12.4f}")
+    print(f" {'Terminal Fate Prediction':<30} | {'Macro F1-Score':<30} | {cls_rep['macro_f1']:<12.4f}")
+    print("=" * 78)
+
+    print("\n[+] Confusion Matrix (Rows=True, Cols=Pred: 0=Bound, 1=Ejection, 2=Collision):")
+    cm = cls_rep["confusion_matrix"]
+    for row in cm:
+        print("    " + "  ".join(f"{val:6d}" for val in row))
+
+    out_report_path = Path(args.output_report)
+    out_report_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+    print(f"\n[+] Full publication report saved to: {out_report_path}")
 
 
 def main() -> None:
@@ -493,19 +663,28 @@ def main() -> None:
     p_vis.add_argument("--dpi", type=int, default=300, help="Figure DPI")
 
     # train-model
-    p_train = subparsers.add_parser("train-model", help="Train Equivariant GNN + Survival Head")
+    p_train = subparsers.add_parser("train-model", help="Train Equivariant GNN or SympGal-Net")
     p_train.add_argument("--results", "-r", type=str, default="data/simulation_results.pt", help="Results file path")
+    p_train.add_argument("--model-type", type=str, default="sympgal_net", choices=["sympgal_net", "gnn"], help="Architecture to train")
     p_train.add_argument("--epochs", "-e", type=int, default=20, help="Training epochs")
     p_train.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     p_train.add_argument("--batch-size", "-b", type=int, default=256, help="Batch size")
     p_train.add_argument("--device", type=str, default="cpu", help="Compute device")
-    p_train.add_argument("--model-output", "-m", type=str, default="data/survival_model.pt", help="Model checkpoint path")
+    p_train.add_argument("--model-output", "-m", type=str, default="data/sympgal_model.pt", help="Model checkpoint path")
 
     # predict-escape
     p_pred = subparsers.add_parser("predict-escape", help="Predict swarm survival and escape times")
-    p_pred.add_argument("--model", "-m", type=str, default="data/survival_model.pt", help="Trained model path")
+    p_pred.add_argument("--model", "-m", type=str, default="data/sympgal_model.pt", help="Trained model path")
     p_pred.add_argument("--init-state", "-i", type=str, default="data/swarm_init.pt", help="Swarm state path")
     p_pred.add_argument("--output", "-o", type=str, default="data/predictions.npz", help="Output predictions path")
+
+    # evaluate-model
+    p_eval = subparsers.add_parser("evaluate-model", help="Run comprehensive scientific evaluation benchmark")
+    p_eval.add_argument("--model", "-m", type=str, default="data/sympgal_model.pt", help="Path to trained model")
+    p_eval.add_argument("--test-data", "-t", type=str, default="data/simulation_results.pt", help="Path to test simulation results")
+    p_eval.add_argument("--output-report", "-o", type=str, default="results/metrics_report.json", help="Path to output JSON report")
+    p_eval.add_argument("--n-rotations", type=int, default=5, help="Number of random SO(3) rotations")
+    p_eval.add_argument("--device", type=str, default="cpu", help="Compute device")
 
     args = parser.parse_args()
     if not args.command:
@@ -522,6 +701,8 @@ def main() -> None:
         cmd_train_model(args)
     elif args.command == "predict-escape":
         cmd_predict_escape(args)
+    elif args.command == "evaluate-model":
+        cmd_evaluate_model(args)
 
 
 if __name__ == "__main__":
