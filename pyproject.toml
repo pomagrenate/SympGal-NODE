@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sympgal-node"
+version = "0.1.0"
+description = "Symplectic Hamiltonian Neural ODE framework for Relativistic Stellar Swarm Dynamics"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.22.0",
+    "scipy>=1.9.0",
+    "matplotlib>=3.6.0",
+]
+
+[project.scripts]
+sympgal = "sympgal_node.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sympgal_node*"]
