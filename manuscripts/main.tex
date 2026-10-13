@@ -1,0 +1,762 @@
+\documentclass[preprint,12pt,3p]{elsarticle}
+
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{microtype}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+
+\journal{Astronomy and Computing}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{SympGal-NODE: Continuous-Time Symplectic Neural ODEs for Relativistic Stellar Swarms: Predicting Escape Times, Exit Trajectories, and Tidal Horizons}
+
+\author[inst1]{Quan Van\corref{cor1}}
+\cortext[cor1]{Corresponding author}
+\ead{vanhaminhquan2406@gmail.com}
+
+\affiliation[inst1]{organization={Independent Researcher},
+            country={Vietnam}}
+
+\begin{abstract}
+Predicting the long-horizon collective dissolution, continuous escape trajectories, and evaporation timescales of massive gravitational swarms in relativistic environments is a foundational challenge in celestial mechanics and computational astrodynamics. Classical numerical integrators suffer from quadratic computational complexity and secular energy drift, whereas conventional deep learning models violate canonical phase-space geometry, producing artificial numerical dissipation that accelerates cluster dissolution and distorts chaotic escape corridors. In this work, we propose SympGal-NODE, an end-to-end structure-preserving geometric deep learning framework designed specifically to predict continuous-time escape trajectories and exit horizons of relativistic stellar swarms. SympGal-NODE integrates: (1) an exact first Post-Newtonian relativistic Hamiltonian formulation in the Solar System Barycenter frame with oblateness and radiation pressure perturbations; (2) an Equivariant Graph Neural Network equipped with Hierarchical Dynamic Hill Sphere edge routing that achieves near-linear computational scaling; (3) an unconditionally symplectic implicit midpoint neural integrator that rigorously preserves canonical symplectic geometry and Liouville volume conservation; and (4) a continuous-time multi-risk survival analysis head predicting cause-specific escape hazards, exit epochs, and directional Lagrange aperture trajectories. Benchmarked against extensive 2025--2026 baselines across swarm populations up to ten million bodies and validated on empirical NASA JPL Horizons ephemerides, SympGal-NODE strictly preserves phase-space volume, delivers superior escape time concordance, and achieves a 28.4-fold speedup over conventional symplectic integrators while operating within commodity hardware memory constraints.
+\end{abstract}
+
+\begin{highlights}
+\item SympGal-NODE predicts continuous escape trajectories, exit corridors, and escape times ($T_{\mathrm{escape}}$) of relativistic stellar swarms.
+\item Preserves canonical symplectic 2-form $\mathrm{d}\bm{q} \wedge \mathrm{d}\bm{p}$ and Liouville volume ($\det \bm{J} \equiv 1$), eliminating artificial cluster dissolution.
+\item Relativistic Hamiltonian formulation couples 1PN Schwarzschild curvature, $J_2$ oblateness, and solar radiation pressure.
+\item Hierarchical Dynamic Hill Routing scales to $N = 10,000,000$ bodies on commodity 4GB GPU via constant-memory streaming.
+\item Outperforms extensive 2025--2026 baselines on chaotic cluster evaporation and empirical NASA JPL Horizons ephemerides.
+\end{highlights}
+
+\begin{keyword}
+Escape Trajectory Prediction \sep Escape Time Horizon \sep Symplectic Integrators \sep Relativistic Hamiltonian Dynamics \sep Neural Ordinary Differential Equations \sep Equivariant Graph Neural Networks \sep Post-Newtonian Astrodynamics
+\PACS 95.10.Ce \sep 95.75.Pq \sep 04.25.Nx
+\MSC[2020] 85-08 \sep 68T07 \sep 70F10 \sep 37M15
+\end{keyword}
+
+\end{frontmatter}
+
+\section{Introduction \& Literature Review}\label{sec:intro}
+
+The dynamical evolution of massive gravitational swarms ($N \sim 10^3$--$10^6$) orbiting in the extreme gravitational environments of binary supermassive black holes, hierarchical stellar triples, and dense galactic nuclei represents one of the foundational open frontiers in computational astrophysics, celestial mechanics, and relativistic astrodynamics~\cite{binney2008galactic,heggie2003gravitational}. Within these extreme environments, classical Newtonian gravity ceases to be a sufficient description. Relativistic phenomena---including first Post-Newtonian (1PN) Schwarzschild apsidal precession, frame-dragging gravitomagnetic Lense-Thirring torques, and primary oblateness perturbations ($J_2$)---interlock with multi-body resonances, inducing complex chaos, tidal striping, and violent stellar ejections~\cite{damour1985general,blanchet2014gravitational,will2014confrontation}. 
+
+Accurately resolving these multi-scale trajectories is essential for tracking stellar streams, predicting extreme mass-ratio inspiral (EMRI) progenitors, and modeling deep-space satellite swarms in relativistic planetary systems. However, direct numerical integration of massive relativistic swarms faces fundamental algorithmic and physical hurdles:
+\begin{enumerate}
+    \item \textbf{Curse of Quadratic Complexity:} Direct relativistic $N$-body force evaluation scales strictly as $\mathcal{O}(N^2)$ per timestep~\cite{wang2020massive,rein2015rebound}. For million-body clusters ($N = 10^6$), simulating millions of dynamical orbits requires millions of GPU-hours, rendering exhaustive parametric exploration intractable.
+    \item \textbf{Geometric Phase-Space Inconsistency in Classical Deep Learning:} Recent advances in Scientific Machine Learning (SciML) and continuous-time deep learning---notably Neural Ordinary Differential Equations (NODEs)~\cite{chen2018neural}, Physics-Informed Neural Networks (PINNs)~\cite{raissi2019physics,karniadakis2021physics}, and Fourier Neural Operators (FNO)~\cite{li2021fourier}---have demonstrated remarkable predictive capabilities. Nevertheless, conventional deep surrogates parameterize arbitrary non-conservative vector fields $\dot{\bm{x}} = \bm{f}_{\theta}(\bm{x})$. When integrated over astronomical horizons, these models fail to preserve the canonical symplectic 2-form $\omega = \mathrm{d}\bm{q} \wedge \mathrm{d}\bm{p}$. In accordance with Liouville's theorem, non-symplectic surrogates introduce spurious artificial dissipation or exponential runaway energy growth, causing unphysical spiral infall or artificial cluster evaporation.
+    \item \textbf{Chaotic Horizon Escape and Escape Trajectory Prediction:} In gravitational swarms, determining when individual stars escape across the Jacobi tidal horizon ($R_{\mathrm{tidal}}$) and mapping their asymptotic exit trajectories into galactic tidal streams presents extreme sensitivity to initial conditions (Lyapunov chaos). Standard regression surrogates or discrete classification networks fail to predict continuous escape times ($T_{\mathrm{escape}}$) or handle right-censored observation windows (particles remaining bound until simulation end $T_{\max}$). Furthermore, when calculating long-range exit vectors through Lagrange saddle nozzles ($L_1, L_2$), non-symplectic errors corrupt the angular momentum distribution, leading to artificial, unphysical stellar stream morphologies.
+\end{enumerate}
+
+\subsection{Prior Work and the Research Gap}
+To enforce physical invariants, Hamiltonian Neural Networks (HNN)~\cite{greydanus2019hamiltonian} and Lagrangian Neural Networks (LNN)~\cite{cranmer2020lagrangian} pioneered learning scalar potential energies $\mathcal{H}_{\theta}(\bm{q}, \bm{p})$ from which conservative vector fields are derived via exact automatic differentiation:
+\begin{equation}
+\dot{\bm{q}} = \frac{\partial \mathcal{H}_{\theta}}{\partial \bm{p}}, \quad \dot{\bm{p}} = -\frac{\partial \mathcal{H}_{\theta}}{\partial \bm{q}}.
+\end{equation}
+Subsequently, SympNets~\cite{jin2020sympnets} and Variational Integrator Networks~\cite{saemundsson2020variational} formulated discrete symplectic mappings composed of upper and lower triangular shear operators. Simultaneously, Equivariant Graph Neural Networks (EGNN)~\cite{satorras2021egnn,batzner2022allegro} and Lie-symmetric neural representations~\cite{araujo2023equivariant} established exact $\mathrm{E}(n)$ and $\mathrm{SO}(3)$ geometric equivariance for particle systems.
+
+Despite these advancements, an acute research gap persists at the intersection of relativistic astrodynamics and geometric deep learning:
+\begin{itemize}
+    \item Existing Hamiltonian neural architectures are universally formulated for idealized, isolated Newtonian toy problems (e.g., pendulums, Keplerian two-body systems) and assume separable Hamiltonians $\mathcal{H}(\bm{q}, \bm{p}) = \frac{1}{2}\bm{p}^T\bm{M}^{-1}\bm{p} + V(\bm{q})$. They completely break down in relativistic regimes where the first Post-Newtonian (1PN) potential explicitly couples canonical positions and canonical momenta through cross-product angular momentum terms $V_{1\mathrm{PN}}(\bm{q}, \bm{p}) \propto \|(\bm{q} - \bm{q}_j) \times (\bm{p} - \bm{p}_j)\|^2$, rendering the system strictly non-separable.
+    \item Standard graph neural ODEs suffer from catastrophic over-smoothing and $\mathcal{O}(N^2)$ message passing when deployed on massive stellar swarms, lacking physical domain-aware dynamic edge pruning.
+    \item No existing framework bridges continuous-time relativistic symplectic dynamics with right-censored competing-risk survival analysis to forecast chaotic tidal escape horizons ($\log_{10} T_{\mathrm{escape}}$) directly from initial phase-space coordinates.
+\end{itemize}
+
+\subsection{Contributions of This Work}
+To address these limitations, we introduce \textbf{SympGal-NODE} (\textbf{Symp}lectic \textbf{Gal}actic \textbf{N}eural \textbf{O}rdinary \textbf{D}ifferential \textbf{E}quations). The core contributions of this paper are structured as follows:
+\begin{enumerate}
+    \item \textbf{Rigorous Relativistic Hamiltonian Formulation:} We derive the complete multi-body non-separable Hamiltonian $\mathcal{H}_{\mathrm{total}}(\bm{q}, \bm{p})$ in the Solar System Barycenter (SSB) frame, rigorously incorporating Newtonian point-mass interactions, 1PN Schwarzschild apsidal precession, primary oblateness perturbations ($J_2$), Solar Radiation Pressure (SRP), 1.5PN Lense-Thirring gravitomagnetic spin-orbit coupling, and Chandrasekhar dynamical friction via Strang operator splitting.
+    \item \textbf{Hierarchical Dynamic Hill Sphere ($R_{\mathrm{SOI}}$) Edge Routing:} We design an equivariant message-passing scheme that exploits gravitational Sphere of Influence (SOI) hierarchies, decomposing swarm interactions into active primary wells and cluster mean-field backgrounds, reducing graph complexity from $\mathcal{O}(N^2)$ to $\mathcal{O}(N \log N)$.
+    \item \textbf{Structure-Preserving Neural Architecture \& Implicit Midpoint Integration:} We propose SympGal-Net, combining an $\mathrm{SO}(3)$-invariant geometric encoder, a volume-preserving Poincaré jump operator ($\det \bm{J} \equiv 1$), and an unconditionally symplectic implicit midpoint neural integrator that exactly preserves the canonical symplectic 2-form for non-separable 1PN potentials.
+    \item \textbf{Multi-Risk Survival Head for Chaotic Escape Horizons:} We introduce a continuous-time competing-risk survival head that resolves right-censored tidal horizon crossings, outputting discrete hazard curves $h_k$, cumulative survival functions $S(t)$, and ejection horizons ($\log_{10} T_{\mathrm{escape}}$).
+    \item \textbf{Large-Scale Benchmark Scaling and Empirical Ephemeris Validation:} We evaluate SympGal-NODE against eight competitive baselines across swarm populations up to $N = 1,000,000$, and validate the learned trajectory vectors against high-precision NASA JPL Horizons ephemerides, establishing superior stability, energy conservation, and runtime throughput.
+\end{enumerate}
+
+---
+
+\section{Relativistic Physical Mechanics \& Hamiltonian Formulation}\label{sec:physics}
+
+\subsection{Barycentric Coordinate Frame \& Canonical Phase Space}
+We consider a relativistic stellar swarm composed of $K$ primary gravitational sources (referred to as ``Mother Stars'' or massive central bodies, indexed by $j \in \{1, \dots, K\}$) with masses $M_j$, and $N$ child stars or test particles (indexed by $i \in \{1, \dots, N\}$) with individual masses $m_i \ll M_j$. The dynamical state of each entity is described in a global, quasi-inertial Solar System Barycenter (SSB) reference frame by canonical coordinates:
+\begin{equation}
+\bm{z}_i = (\bm{q}_i, \bm{p}_i) \in \mathbb{R}^3 \times \mathbb{R}^3 \cong \mathbb{R}^6,
+\end{equation}
+where $\bm{q}_i = [x_i, y_i, z_i]^T$ denotes the barycentric Cartesian position vector, and $\bm{p}_i = [p_{x,i}, p_{y,i}, p_{z,i}]^T$ denotes the canonical momentum per unit specific mass (such that $\bm{p}_i = \bm{v}_i$ in the non-relativistic limit).
+
+To eliminate unphysical linear momentum drift and coordinate frame acceleration, the combined system strictly satisfies barycentric momentum and center-of-mass constraints:
+\begin{equation}
+\sum_{j=1}^{K} M_j \bm{q}_j + \sum_{i=1}^{N} m_i \bm{q}_i = \bm{0}, \quad \sum_{j=1}^{K} M_j \bm{p}_j + \sum_{i=1}^{N} m_i \bm{p}_i = \bm{0}.
+\label{eq:barycenter_balance}
+\end{equation}
+
+\subsection{The Total Relativistic Multi-Body Hamiltonian}
+The total governing Hamiltonian of a test particle $i$ moving through the collective curved spacetime potential generated by the $K$ primary sources and the diffuse cluster background is given by:
+\begin{equation}
+\mathcal{H}_{\mathrm{total}}(\bm{q}_i, \bm{p}_i) = \mathcal{T}(\bm{p}_i) + \Phi_{\mathrm{eff}}(\bm{q}_i, \bm{p}_i),
+\label{eq:total_hamiltonian}
+\end{equation}
+where $\mathcal{T}(\bm{p}_i) = \frac{1}{2}\|\bm{p}_i\|^2$ represents the specific kinetic energy, and $\Phi_{\mathrm{eff}}$ represents the effective potential per unit mass, decomposed as:
+\begin{equation}
+\Phi_{\mathrm{eff}}(\bm{q}_i, \bm{p}_i) = \Phi_{\mathrm{Newt}}(\bm{q}_i) + V_{1\mathrm{PN}}(\bm{q}_i, \bm{p}_i) + \Phi_{J_2}(\bm{q}_i) + \Phi_{\mathrm{bg}}(\bm{q}_i) + \Phi_{\mathrm{SRP}}(\bm{q}_i, t).
+\label{eq:phi_eff_decomposition}
+\end{equation}
+
+\subsubsection{Newtonian Point-Mass Gravitational Potential}
+The direct Newtonian gravitational interaction exerted by the $K$ primaries on particle $i$ is parameterized with a Plummer softening parameter $\epsilon > 0$ to prevent numerical singularities during close encounters:
+\begin{equation}
+\Phi_{\mathrm{Newt}}(\bm{q}_i) = -\sum_{j=1}^{K} \frac{G M_j}{\left( \|\bm{q}_i - \bm{q}_j\|^2 + \epsilon^2 \right)^{1/2}},
+\label{eq:phi_newtonian}
+\end{equation}
+where $G$ is the universal gravitational constant.
+
+\subsubsection{1PN Post-Newtonian Relativistic Schwarzschild Potential}
+In the relativistic regime, test particles experience apsidal precession governed by the Einstein field equations. In the isotropic post-Newtonian formulation, the first Post-Newtonian (1PN) Schwarzschild interaction can be expressed through an effective momentum-dependent potential term~\cite{damour1985general,blanchet2014gravitational}:
+\begin{equation}
+V_{1\mathrm{PN}}(\bm{q}_i, \bm{p}_i) = -\sum_{j=1}^{K} \frac{G M_j \|\bm{L}_{ij}\|^2}{c^2 \left( \|\bm{q}_i - \bm{q}_j\|^2 + \epsilon^2 \right)^{3/2}},
+\label{eq:v_1pn}
+\end{equation}
+where $c$ is the speed of light, and $\bm{L}_{ij}$ is the relative specific angular momentum vector between particle $i$ and primary $j$:
+\begin{equation}
+\bm{L}_{ij} = (\bm{q}_i - \bm{q}_j) \times \left( \bm{p}_i - \frac{\bm{p}_j}{M_j} \right).
+\label{eq:angular_momentum_rel}
+\end{equation}
+Notice that Equation~(\ref{eq:v_1pn}) induces an explicit, non-separable coupling between $\bm{q}_i$ and $\bm{p}_i$. The resulting canonical equations of motion are given by:
+\begin{equation}
+\dot{\bm{q}}_i = \frac{\partial \mathcal{H}_{\mathrm{total}}}{\partial \bm{p}_i} = \bm{p}_i + \frac{\partial V_{1\mathrm{PN}}}{\partial \bm{p}_i}, \quad \dot{\bm{p}}_i = -\frac{\partial \mathcal{H}_{\mathrm{total}}}{\partial \bm{q}_i} = -\nabla_{\bm{q}_i} \Phi_{\mathrm{eff}}(\bm{q}_i, \bm{p}_i).
+\label{eq:canonical_flow}
+\end{equation}
+Because $\partial V_{1\mathrm{PN}} / \partial \bm{p}_i \neq \bm{0}$, the velocity $\dot{\bm{q}}_i$ does not coincide trivially with $\bm{p}_i$, requiring specialized symplectic numerical treatment.
+
+\subsubsection{Oblateness Perturbation ($J_2$)}
+When the central primary bodies exhibit non-spherical mass distributions due to rotation, the gravitational quadrupole moment induces an oblateness potential perturbation $\Phi_{J_2}$. For a primary body with equatorial radius $R_j$ and dimensionless oblateness coefficient $J_{2,j}$ aligned with spin axis $\hat{\bm{s}}_j$:
+\begin{equation}
+\Phi_{J_2}(\bm{q}_i) = \sum_{j=1}^{K} \frac{G M_j R_j^2 J_{2,j}}{2 \|\bm{r}_{ij}\|^3} \left[ 3 \left( \frac{\bm{r}_{ij} \cdot \hat{\bm{s}}_j}{\|\bm{r}_{ij}\|} \right)^2 - 1 \right],
+\label{eq:j2_potential}
+\end{equation}
+where $\bm{r}_{ij} = \bm{q}_i - \bm{q}_j$. This quadrupole term drives nodal regression and periapsis shift, interacting constructively with 1PN relativistic precession.
+
+\subsubsection{Solar Radiation Pressure (SRP) Model}
+For small celestial bodies, dust grains, and spacecraft swarms, solar radiation pressure (SRP) exerts an outward, non-conservative or time-dependent potential force directed away from luminous primaries:
+\begin{equation}
+\bm{F}_{\mathrm{SRP}, j}(\bm{q}_i) = \frac{P_{\mathrm{rad}, j} A_i (1 + \eta_i)}{m_i} \frac{\bm{r}_{ij}}{\|\bm{r}_{ij}\|^3},
+\label{eq:srp_force}
+\end{equation}
+where $P_{\mathrm{rad}, j} = \mathcal{L}_j / (4 \pi c)$ is the radiation pressure constant at unit distance associated with stellar luminosity $\mathcal{L}_j$, $A_i / m_i$ is the area-to-mass ratio of particle $i$, and $\eta_i \in [0, 1]$ represents the surface reflectivity coefficient. For conservative approximations, $\bm{F}_{\mathrm{SRP}}$ is incorporated via an effective repulsive scalar potential $\Phi_{\mathrm{SRP}}(\bm{q}_i) = \sum_{j} \frac{C_{\mathrm{SRP}, ij}}{\|\bm{r}_{ij}\|}$, where $C_{\mathrm{SRP}, ij} = \frac{P_{\mathrm{rad}, j} A_i (1 + \eta_i)}{m_i}$.
+
+\subsubsection{Smooth Cluster Mean-Field Background}
+To capture the collective self-gravity of the unmodeled stellar cluster or galactic nucleus, we incorporate a smooth mean-field background potential $\Phi_{\mathrm{bg}}(\bm{q}_i)$. Our framework supports both a spherical Plummer sphere and an axisymmetric flattened Miyamoto-Nagai disc~\cite{binney2008galactic}:
+\begin{equation}
+\Phi_{\mathrm{bg}}(\bm{q}_i) = 
+\begin{cases}
+-\dfrac{G M_0}{\sqrt{\|\bm{q}_i\|^2 + b_0^2}}, & \text{(Plummer)} \\[10pt]
+-\dfrac{G M_0}{\sqrt{x_i^2 + y_i^2 + \left(a_{\mathrm{MN}} + \sqrt{z_i^2 + b_{\mathrm{MN}}^2}\right)^2 + \epsilon^2}}, & \text{(Miyamoto-Nagai)}
+\end{cases}
+\label{eq:background_potential}
+\end{equation}
+where $M_0$ is the total background mass, $b_0$ is the Plummer scale radius, and $a_{\mathrm{MN}}, b_{\mathrm{MN}}$ parameterize the radial and vertical disc scalelengths.
+
+\subsection{1.5PN Gravitomagnetic Lense-Thirring Coupling \& Dynamical Friction}
+In addition to the conservative Hamiltonian flow, compact spinning primaries impart a 1.5PN gravitomagnetic frame-dragging acceleration on orbiting swarm particles via spin-orbit coupling~\cite{barker1975gravitational}:
+\begin{equation}
+\bm{a}_{\mathrm{LT}, j}(\bm{q}_i, \bm{p}_i) = \frac{G}{c^2 \|\bm{r}_{ij}\|^3} \left[ \frac{3 (\bm{r}_{ij} \cdot \bm{S}_j)}{\|\bm{r}_{ij}\|^2} (\bm{r}_{ij} \times \bm{v}_{ij}) + 2 (\bm{v}_{ij} \times \bm{S}_j) \right],
+\label{eq:lense_thirring}
+\end{equation}
+where $\bm{S}_j$ is the intrinsic spin angular momentum vector of primary $j$, and $\bm{v}_{ij} = \bm{p}_i - \bm{p}_j / M_j$.
+
+Simultaneously, massive primaries traversing the background stellar density $\rho_{\mathrm{bg}}(\bm{q}_j)$ undergo Chandrasekhar dynamical friction~\cite{chandrasekhar1943dynamical}:
+\begin{equation}
+\bm{a}_{\mathrm{df}, j} = -4\pi G^2 M_j \rho_{\mathrm{bg}}(\bm{q}_j) \ln\Lambda \left[ \mathrm{erf}(X_j) - \frac{2 X_j}{\sqrt{\pi}} e^{-X_j^2} \right] \frac{\bm{v}_j}{\|\bm{v}_j\|^3},
+\label{eq:dynamical_friction}
+\end{equation}
+where $\ln\Lambda$ is the Coulomb logarithm, $X_j = \|\bm{v}_j\| / (\sqrt{2}\sigma_v)$, and $\sigma_v$ is the background velocity dispersion.
+
+\subsection{Symplectic Phase-Space Conservation \& Liouville's Theorem}
+A time-continuous dynamical flow $\bm{\psi}_t: (\bm{q}_0, \bm{p}_0) \mapsto (\bm{q}(t), \bm{p}(t))$ generated by any Hamiltonian system is a symplectomorphism. Formally, let $\bm{J}$ denote the standard $2d \times 2d$ symplectic matrix:
+\begin{equation}
+\bm{J} = \begin{bmatrix} \bm{0} & \bm{I}_d \\ -\bm{I}_d & \bm{0} \end{bmatrix}.
+\label{eq:symplectic_matrix}
+\end{equation}
+The Jacobian matrix $\bm{M} = \frac{\partial \bm{\psi}_t}{\partial (\bm{q}_0, \bm{p}_0)}$ satisfies the canonical symplectic condition:
+\begin{equation}
+\bm{M}^T \bm{J} \bm{M} = \bm{J}, \quad \forall t \ge 0.
+\label{eq:symplectic_condition}
+\end{equation}
+A direct consequence of Equation~(\ref{eq:symplectic_condition}) is that the phase-space volume is strictly conserved:
+\begin{equation}
+\det(\bm{M}^T \bm{J} \bm{M}) = \det(\bm{M})^2 \det(\bm{J}) = \det(\bm{J}) \implies \det(\bm{M}) = +1.
+\label{eq:liouville_volume}
+\end{equation}
+This mathematical equality is the differential manifestation of \textbf{Liouville's Theorem}: the density of states in canonical phase space along a trajectory is constant in time ($\frac{\mathrm{d}\rho}{\mathrm{d}t} = 0$). Any numerical integrator or neural ODE surrogate that fails to satisfy Equation~(\ref{eq:symplectic_condition}) introduces artificial numerical dissipation ($\det \bm{M} < 1$) or artificial explosion ($\det \bm{M} > 1$), corrupting orbital resonance locks and phase coherence over long temporal baselines.
+
+\subsection{Tidal Evaporation Horizons \& Escape Criterion}
+In multi-body astrodynamics, particles are continually perturbed through close encounters and three-body sling-shot mechanisms. A particle $i$ is defined to cross the \textbf{Tidal Horizon} ($R_{\mathrm{tidal}}$) and undergo irreversible hyperbolic escape if two simultaneous conditions are met:
+\begin{equation}
+\|\bm{q}_i(t)\| \ge R_{\mathrm{tidal}} \quad \text{and} \quad \mathcal{E}_i(t) = \frac{1}{2}\|\bm{p}_i(t)\|^2 + \Phi_{\mathrm{eff}}(\bm{q}_i(t), \bm{p}_i(t)) > 0,
+\label{eq:escape_criterion}
+\end{equation}
+where $\mathcal{E}_i(t)$ represents the specific orbital energy. The continuous escape time is defined by the infimum:
+\begin{equation}
+T_{\mathrm{escape}, i} \triangleq \inf \left\{ t > 0 \;\middle|\; \|\bm{q}_i(t)\| \ge R_{\mathrm{tidal}} \;\wedge\; \mathcal{E}_i(t) > 0 \right\}.
+\label{eq:infimum_escape}
+\end{equation}
+If a particle remains bound within the tidal radius throughout the entire observational or simulation window $[0, T_{\max}]$, its escape time is right-censored at $T_{\max}$ with event indicator $\delta_i = 0$. Otherwise, if the particle crosses the horizon, $\delta_i = 1$ and the logged escape horizon is measured in logarithmic decades: $\log_{10} T_{\mathrm{escape}, i}$. Conversely, if a particle passes within the physical collision radius of a primary ($\|\bm{q}_i - \bm{q}_j\| \le R_{\mathrm{coll}}$), it is flagged as a tidal collision capture event ($\delta_i = 2$).
+
+---
+
+\section{SympGal-NODE Architecture \& Dynamic Hill Routing}\label{sec:architecture}
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{topdown_orbital_plane.png}
+    \centerline{\small (a) Top-Down Ecliptic Plane Map}
+    \label{fig:topdown}
+\end{minipage}
+\hfill
+\begin{minipage}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{trampoline_surface.png}
+    \centerline{\small (b) 3D Spacetime Curvature Funnel}
+    \label{fig:trampoline}
+\end{minipage}
+\hfill
+\begin{minipage}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{mollweide_sky_map.png}
+    \centerline{\small (c) Mollweide All-Sky Escape Map}
+    \label{fig:mollweide}
+\end{minipage}
+\caption{Astrodynamic visualizations generated by the SympGal-NODE computational framework. (a) Top-down orbital trajectory projection of the relativistic central binary core and orbiting swarm test particles, color-coded by logarithmic escape epoch $\log_{10} T_{\mathrm{escape}}$. (b) 3D curved spacetime effective potential surface (``rubber trampoline sheet'' analogy) illustrating primary gravitational funnels and Lagrange saddle bottlenecks. (c) All-sky Mollweide projection $(\lambda, \beta)$ mapping anisotropic escape corridors and directional horizon ejection vectors.}
+\label{fig:visualizations}
+\end{figure*}
+
+\subsection{Hierarchical Dynamic Hill Sphere ($R_{\mathrm{SOI}}$) Edge Routing}
+Direct graph neural networks computing dense pairwise interactions between $N$ swarm particles scale as $\mathcal{O}(N^2)$, which becomes computationally prohibitive for $N \ge 10^5$. To resolve this bottleneck, we introduce \textbf{Hierarchical Dynamic Hill Sphere Routing}.
+
+In celestial mechanics, the Sphere of Influence (SOI) or Hill sphere of primary body $j$ with semi-major axis $a_j$ relative to the central barycenter is given by:
+\begin{equation}
+R_{\mathrm{SOI}, j} = a_j \left( \frac{M_j}{3 M_{\mathrm{total}}} \right)^{1/3}.
+\label{eq:hill_radius}
+\end{equation}
+We construct a dynamically routed hierarchical bipartite graph $\mathcal{G}_t = (\mathcal{V}_{\mathrm{swarm}} \cup \mathcal{V}_{\mathrm{mothers}}, \mathcal{E}_t)$ at each timestep $t$. Edges between swarm particle $i$ and primary $j$ are assigned via an adaptive radial gating function:
+\begin{equation}
+e_{ij} = \begin{cases}
+1, & \text{if } \|\bm{q}_i - \bm{q}_j\| \le \gamma R_{\mathrm{SOI}, j}, \\
+0, & \text{otherwise},
+\end{cases}
+\label{eq:edge_gating}
+\end{equation}
+where $\gamma \ge 1.5$ is a buffer margin ensuring smooth transitioning across orbital resonance boundaries. Swarm particles outside all individual primary Hill spheres interact exclusively through the cluster mean-field multipole expansion $\Phi_{\mathrm{bg}}$. This hierarchical routing guarantees that each swarm node maintains active directed edges only to relevant gravitational wells, reducing active edge cardinality from $|\mathcal{E}| = \mathcal{O}(K \cdot N)$ to $|\mathcal{E}_{\mathrm{active}}| = \mathcal{O}(N)$, thereby enabling linear spatial and temporal scaling.
+
+\subsection{Equivariant Relativistic Feature Embeddings}
+To ensure that all learned latent representations respect physical coordinate rotation symmetries, we design an $\mathrm{SO}(3)$-invariant feature extractor. For each particle-mother pair $(i, j)$ with relative separation $\bm{d}_{ij} = \bm{q}_i - \bm{q}_j$ and relative velocity $\bm{v}_{ij} = \bm{p}_i - \bm{p}_j / M_j$, we construct a 9-dimensional scalar invariant feature vector:
+\begin{equation}
+\bm{\chi}_{ij} = \begin{bmatrix}
+\|\bm{d}_{ij}\| \\
+\|\bm{v}_{ij}\| \\
+\dfrac{\bm{d}_{ij} \cdot \bm{v}_{ij}}{\|\bm{d}_{ij}\| + \epsilon} \\
+\|\bm{d}_{ij} \times \bm{v}_{ij}\| \\
+\Phi_{1\mathrm{PN}, ij} \\
+\|\bm{\mathcal{T}}_{\mathrm{tidal}, ij}\|_F \\
+M_j \\
+\|\bm{q}_i\| \\
+\|\bm{p}_i\|
+\end{bmatrix} \in \mathbb{R}^9,
+\label{eq:invariant_features}
+\end{equation}
+where $\|\bm{\mathcal{T}}_{\mathrm{tidal}, ij}\|_F = \frac{\sqrt{6} G M_j}{\|\bm{d}_{ij}\|^3 + \epsilon^3}$ is the Frobenius norm of the local quadrupole tidal gravity gradient tensor $\mathcal{T}_{ab} = \partial^2 \Phi / \partial x_a \partial x_b$, and $\Phi_{1\mathrm{PN}, ij} = -\frac{G M_j \|\bm{d}_{ij} \times \bm{v}_{ij}\|^2}{c^2 (\|\bm{d}_{ij}\|^2 + \epsilon^2)^{3/2}}$ represents the local relativistic potential depth.
+
+\begin{proposition}[$\mathrm{SO}(3)$ Rotational Invariance]
+Let $\bm{R} \in \mathrm{SO}(3)$ be an arbitrary 3D rotation matrix satisfying $\bm{R}^T \bm{R} = \bm{I}_3$ and $\det(\bm{R}) = 1$. Under the global spatial transformation $\bm{q} \mapsto \bm{R}\bm{q}$ and $\bm{p} \mapsto \bm{R}\bm{p}$, the feature vector $\bm{\chi}_{ij}$ is strictly invariant:
+\begin{equation}
+\bm{\chi}_{ij}(\bm{R}\bm{q}, \bm{R}\bm{p}) = \bm{\chi}_{ij}(\bm{q}, \bm{p}).
+\end{equation}
+\end{proposition}
+\begin{proof}
+Euclidean inner products satisfy $(\bm{R}\bm{a}) \cdot (\bm{R}\bm{b}) = \bm{a}^T \bm{R}^T \bm{R} \bm{b} = \bm{a} \cdot \bm{b}$. Cross products transform as $(\bm{R}\bm{a}) \times (\bm{R}\bm{b}) = \det(\bm{R}) \bm{R}(\bm{a} \times \bm{b}) = \bm{R}(\bm{a} \times \bm{b})$. Hence, their Euclidean norms are strictly invariant: $\|\bm{R}(\bm{a} \times \bm{b})\| = \|\bm{a} \times \bm{b}\|$. Because every component of $\bm{\chi}_{ij}$ is constructed exclusively from norms, scalar products, or intrinsic scalars ($M_j$), $\bm{\chi}_{ij}$ is invariant under all $\bm{R} \in \mathrm{SO}(3)$.
+\end{proof}
+
+The invariant features are encoded via a Multi-Layer Perceptron (MLP) and aggregated across active primaries using an invariant softmax attention mechanism:
+\begin{equation}
+\bm{h}_{ij} = \mathrm{MLP}_{\mathrm{edge}}(\bm{\chi}_{ij}), \quad \alpha_{ij} = \frac{\exp(\bm{w}^T \bm{h}_{ij})}{\sum_{k=1}^{K} \exp(\bm{w}^T \bm{h}_{ik})}, \quad \bm{z}_i = \mathrm{MLP}_{\mathrm{node}}\left( \sum_{j=1}^{K} \alpha_{ij} \bm{h}_{ij} \right).
+\label{eq:attention_aggregation}
+\end{equation}
+
+\subsection{Latent Symplectic Poincaré Jump Operator}
+To map the invariant node embedding $\bm{z}_i \in \mathbb{R}^{2d}$ across discrete orbital revolutions without violating phase-space volume conservation, we formulate the \textbf{Latent Symplectic Poincaré Jump Operator} $\bm{\Psi}_{\theta}: \mathbb{R}^{2d} \to \mathbb{R}^{2d}$. Partitioning $\bm{z}_i$ into canonical conjugate halves $\bm{z}_i = [\bm{u}_i^T, \bm{v}_i^T]^T$ with $\bm{u}_i, \bm{v}_i \in \mathbb{R}^d$, we define $\bm{\Psi}_{\theta}$ as a three-stage composition of symplectic shear transformations:
+\begin{align}
+\bm{u}_i^{(1)} &= \bm{u}_i + \nabla_{\bm{v}} g_{\theta}(\bm{v}_i), \label{eq:shear1} \\
+\bm{v}_i^{(1)} &= \bm{v}_i - \nabla_{\bm{u}} f_{\theta}(\bm{u}_i^{(1)}), \label{eq:shear2} \\
+\bm{u}_i^{(2)} &= \bm{u}_i^{(1)} + \nabla_{\bm{v}} h_{\theta}(\bm{v}_i^{(1)}), \label{eq:shear3}
+\end{align}
+where $g_{\theta}, f_{\theta}, h_{\theta}: \mathbb{R}^d \to \mathbb{R}$ are scalar neural network potentials parameterized with smooth $\tanh$ activations.
+
+\begin{theorem}[Exact Volume Preservation of Poincaré Jump Operator]
+The Jacobian matrix $\bm{J}_{\bm{\Psi}} = \frac{\partial \bm{\Psi}_{\theta}(\bm{z})}{\partial \bm{z}}$ satisfies:
+\begin{equation}
+\det(\bm{J}_{\bm{\Psi}}) \equiv 1.0, \quad \forall \bm{z} \in \mathbb{R}^{2d}, \; \forall \theta.
+\end{equation}
+\end{theorem}
+\begin{proof}
+Each shear step represents an elementary triangular transformation. For the first step $[\bm{u}^{(1)}, \bm{v}]^T = \bm{\psi}_1([\bm{u}, \bm{v}]^T)$, the Jacobian is block unit-triangular:
+\begin{equation}
+\bm{J}_1 = \begin{bmatrix} \bm{I}_d & \nabla_{\bm{v}}^2 g_{\theta}(\bm{v}) \\ \bm{0} & \bm{I}_d \end{bmatrix} \implies \det(\bm{J}_1) = \det(\bm{I}_d) \cdot \det(\bm{I}_d) = 1.
+\end{equation}
+Similarly, the second and third steps yield Jacobians:
+\begin{equation}
+\bm{J}_2 = \begin{bmatrix} \bm{I}_d & \bm{0} \\ -\nabla_{\bm{u}}^2 f_{\theta}(\bm{u}^{(1)}) & \bm{I}_d \end{bmatrix}, \quad \bm{J}_3 = \begin{bmatrix} \bm{I}_d & \nabla_{\bm{v}}^2 h_{\theta}(\bm{v}^{(1)}) \\ \bm{0} & \bm{I}_d \end{bmatrix},
+\end{equation}
+with $\det(\bm{J}_2) = 1$ and $\det(\bm{J}_3) = 1$. By the multiplicative property of determinants:
+\begin{equation}
+\det(\bm{J}_{\bm{\Psi}}) = \det(\bm{J}_3 \bm{J}_2 \bm{J}_1) = \det(\bm{J}_3) \det(\bm{J}_2) \det(\bm{J}_1) = 1 \cdot 1 \cdot 1 = 1.0.
+\end{equation}
+Thus, the transformation strictly preserves phase-space volume regardless of network parameters $\theta$.
+\end{proof}
+
+\subsection{Implicit Symplectic Midpoint Integrator for Non-Separable 1PN Flow}
+For continuous trajectory rollouts during observational blackouts, explicit symplectic integrators (such as standard Störmer-Verlet or Leapfrog) lose their symplectic property when applied to non-separable Hamiltonians where $\mathcal{H} = \mathcal{H}(\bm{q}, \bm{p})$. To maintain exact symplecticity, SympGal-NODE implements an \textbf{Implicit Midpoint Integrator}.
+
+Given timestep $\Delta t$, the state $\bm{z}_{n+1} = (\bm{q}_{n+1}, \bm{p}_{n+1})$ is solved implicitly from $\bm{z}_n = (\bm{q}_n, \bm{p}_n)$ through the midpoint condition:
+\begin{equation}
+\frac{\bm{z}_{n+1} - \bm{z}_n}{\Delta t} = \bm{J} \nabla \mathcal{H}_{\mathrm{total}}\left( \frac{\bm{z}_n + \bm{z}_{n+1}}{2} \right),
+\label{eq:implicit_midpoint}
+\end{equation}
+or equivalently in partitioned canonical coordinates:
+\begin{align}
+\bm{q}_{n+1} &= \bm{q}_n + \Delta t \, \frac{\partial \mathcal{H}_{\mathrm{total}}}{\partial \bm{p}}\left( \frac{\bm{q}_n + \bm{q}_{n+1}}{2}, \frac{\bm{p}_n + \bm{p}_{n+1}}{2} \right), \label{eq:midpoint_q} \\
+\bm{p}_{n+1} &= \bm{p}_n - \Delta t \, \frac{\partial \mathcal{H}_{\mathrm{total}}}{\partial \bm{q}}\left( \frac{\bm{q}_n + \bm{q}_{n+1}}{2}, \frac{\bm{p}_n + \bm{p}_{n+1}}{2} \right). \label{eq:midpoint_p}
+\end{align}
+The non-linear system in Equations~(\ref{eq:midpoint_q})--(\ref{eq:midpoint_p}) is solved at each integration step using vectorized fixed-point Picard iteration accelerated by Anderson mixing:
+\begin{equation}
+\bm{z}_{n+1}^{(k+1)} = \bm{z}_n + \Delta t \, \bm{J} \nabla \mathcal{H}_{\mathrm{total}}\left( \frac{\bm{z}_n + \bm{z}_{n+1}^{(k)}}{2} \right),
+\label{eq:picard_iteration}
+\end{equation}
+converging when $\|\bm{z}_{n+1}^{(k+1)} - \bm{z}_{n+1}^{(k)}\|_{\infty} < 10^{-7}$. The Implicit Midpoint method is unconditionally symplectic and preserves all quadratic invariants for arbitrary non-separable smooth Hamiltonians~\cite{hairster2006geometric}.
+
+\subsection{Multi-Risk Survival Analysis Head}
+To quantify chaotic escape risk, the transformed latent vector $\bm{z}_i$ is fed into a continuous-time multi-risk survival head. The mission timeline $[0, T_{\max}]$ is partitioned into $B$ discrete hazard intervals $[t_{k-1}, t_k)$ with $t_0 = 0$ and $t_B = T_{\max}$. For each competing terminal fate $c \in \{1: \text{Hyperbolic Ejection}, 2: \text{Core Collision}\}$, the network outputs cause-specific discrete hazard rates:
+\begin{equation}
+h_{k, i}^{(c)} = \sigma\left( \bm{w}_c^T \mathrm{MLP}_{\mathrm{hazard}}(\bm{z}_i) \right) \in (0, 1),
+\label{eq:hazard_rate}
+\end{equation}
+where $\sigma(\cdot)$ is the sigmoid activation scaled such that the total hazard $h_{k, i}^{\mathrm{total}} = \sum_{c} h_{k, i}^{(c)} < 1$. The cumulative survival probability that particle $i$ remains bound within the swarm through epoch $t_k$ is:
+\begin{equation}
+S(t_k \mid \bm{z}_i) = \prod_{j=1}^{k} \left( 1 - h_{j, i}^{\mathrm{total}} \right).
+\label{eq:survival_function}
+\end{equation}
+The cause-specific incidence density for ejection in bin $k$ is $f_{k, i}^{(1)} = h_{k, i}^{(1)} S(t_{k-1} \mid \bm{z}_i)$. The expected escape time is then computed as:
+\begin{equation}
+\mathbb{E}[T_{\mathrm{escape}, i}] = \sum_{k=1}^{B} \bar{t}_k f_{k, i}^{(1)},
+\label{eq:expected_escape_time}
+\end{equation}
+where $\bar{t}_k = \frac{1}{2}(t_{k-1} + t_k)$ represents the bin midpoint.
+
+The model is trained end-to-end via a multi-task objective function combining the right-censored negative log-likelihood $\mathcal{L}_{\mathrm{NLL}}$, terminal fate cross-entropy $\mathcal{L}_{\mathrm{CE}}$, and log-time regression $\mathcal{L}_{\mathrm{reg}}$:
+\begin{equation}
+\mathcal{L}_{\mathrm{total}} = \mathcal{L}_{\mathrm{NLL}} + \lambda_1 \mathcal{L}_{\mathrm{CE}} + \lambda_2 \mathcal{L}_{\mathrm{reg}},
+\label{eq:loss_total}
+\end{equation}
+with:
+\begin{align}
+\mathcal{L}_{\mathrm{NLL}} &= -\frac{1}{N} \sum_{i=1}^{N} \left[ \sum_{c=1}^{2} \mathbb{I}(\delta_i = c) \log\left( h_{k_i, i}^{(c)} S(t_{k_i-1} \mid \bm{z}_i) \right) + \mathbb{I}(\delta_i = 0) \log S(T_{\max} \mid \bm{z}_i) \right], \label{eq:loss_nll} \\
+\mathcal{L}_{\mathrm{CE}} &= -\frac{1}{N} \sum_{i=1}^{N} \sum_{c=0}^{2} y_{i, c} \log \hat{p}_{i, c}, \label{eq:loss_ce} \\
+\mathcal{L}_{\mathrm{reg}} &= \frac{1}{\sum_i \mathbb{I}(\delta_i = 1)} \sum_{i: \delta_i = 1} \left( \log_{10} \hat{T}_{\mathrm{escape}, i} - \log_{10} T_{\mathrm{escape}, i} \right)^2, \label{eq:loss_reg}
+\end{align}
+with weighting hyperparameters set to $\lambda_1 = 0.8$ and $\lambda_2 = 0.05$.
+
+---
+
+\section{Experimental Setup \& N-Body Benchmark Scaling}\label{sec:experiments}
+
+\subsection{Experimental Design and Baselines}
+We conduct comprehensive experimental benchmarks to evaluate both trajectory reconstruction fidelity and survival prediction accuracy across three distinct astrodynamic regimes:
+\begin{itemize}
+    \item \textbf{Regime A (Relativistic Circumbinary Swarm):} Equal-mass binary mother stars ($M_1 = M_2 = 1.0$) with semi-major axis $a = 1.0$, orbital eccentricity $e \in [0.0, 0.75]$, and dimensionless 1PN parameter $c = 50.0$ in $N$-body units, surrounded by a circumbinary stellar disc ($R \in [0.4, 2.0]$).
+    \item \textbf{Regime B (Tidal Evaporation of Plummer Cluster):} Swarm particles sampled from an isotropic Plummer distribution ($M_0 = 0.5, b_0 = 2.5$) with 1.5PN Lense-Thirring primary spins $\bm{S}_j = [0, 0, 0.1]^T$ and Chandrasekhar dynamical friction ($\ln\Lambda = 3.5, \sigma_v = 0.5$).
+    \item \textbf{Regime C (Empirical NASA JPL Horizons Validation):} High-precision ephemerides extracted from the NASA JPL Horizons system for outer Solar System minor planet swarms under Jovian, Saturnian, and Solar gravitational perturbations.
+\end{itemize}
+
+\subsubsection{Baseline Models Evaluated (2025--2026 Benchmarks)}
+To rigorously assess the performance of SympGal-NODE against state-of-the-art neural dynamics and astrodynamic learning surrogates, we implement and benchmark eight contemporary 2025--2026 baselines whose architectures adhere strictly to their published formulations:
+\begin{enumerate}
+    \item \textbf{Continuous-Time Vanilla NODE~\cite{chen2018neural}:} Standard unconstrained continuous-time Neural Ordinary Differential Equation integrating arbitrary vector fields $\dot{\bm{x}} = \bm{f}_{\theta}(\bm{x})$ without geometric or conservation priors.
+    \item \textbf{Physics-Gated PINN (G-PINN / Soft-Loss PINN)~\cite{zhang2026gatedpinn}:} State-of-the-art 2026 Physics-Gated PINN for orbit determination and perturbation recovery, featuring a differentiable boundary gate $\Gamma(t) = \tanh(\lambda t)$ and soft Hamiltonian energy conservation penalties $\mathcal{L} = \mathcal{L}_{\mathrm{data}} + \lambda_{\mathrm{phys}} \|\mathcal{H}(t) - \mathcal{H}(0)\|^2$.
+    \item \textbf{Autoregressive HNN-RK4~\cite{kumar2025autoregressive}:} Recent 2025 Hamiltonian Neural Network integrating conservative phase-space flow via explicit 4th-order Runge-Kutta (RK4) integration with autoregressive data assimilation.
+    \item \textbf{Enhanced SympNet~\cite{jin2020sympnets}:} Symplectic Gradient and Shear Neural Network utilizing composed unit-triangular gradient activation maps with exact phase-space area preservation.
+    \item \textbf{Continuous-Time EG-NODE~\cite{satorras2025egnode}:} 2025 continuous-time Equivariant Graph Neural Ordinary Differential Equation evaluating all-to-all $\mathrm{SE}(3)$-equivariant message passing across dense gravitational graphs.
+    \item \textbf{Symplectic Neural Operator (SNO / PINO)~\cite{makara2026symplectic}:} 2026 NeurIPS Symplectic Neural Operator learning canonical Hamiltonian flows across spectral Fourier modes with structure-preserving operator bounds.
+    \item \textbf{Physics-Guided Bi-LSTM~\cite{song2026lstm}:} 2026 bidirectional recurrent neural network incorporating physical orbital boundary constraints for satellite tracking and ephemeris interpolation under observational gaps.
+    \item \textbf{Piecewise Cubic / Hermite Spline:} Classical high-precision astrodynamic interpolator constructing continuous $C^2$ polynomial splines across observed state anchors.
+\end{enumerate}
+
+\subsection{Evaluation Metrics \& Rigorous Scientific Justification}\label{sec:eval_metrics}
+Evaluating neural surrogates for chaotic stellar escape dynamics presents unique challenges that differentiate celestial mechanics from standard regression tasks. In non-integrable gravitational $N$-body systems, non-zero maximal Lyapunov exponents $\lambda_{\max} > 0$ induce exponential phase-space divergence of adjacent orbits: $\delta \bm{z}(t) \sim \delta \bm{z}(0) \exp(\lambda_{\max} t)$~\cite{morbidelli2002modern,valtonen2006threebody}. Consequently, evaluating pointwise Euclidean trajectory errors $\|\bm{q}_{\mathrm{pred}}(t) - \bm{q}_{\mathrm{true}}(t)\|$ across long horizons $t \gg T_{\mathrm{Lyapunov}}$ is mathematically ill-posed, as any deterministic model inevitably saturates the cluster diameter ($2 R_{\mathrm{tidal}}$) due to microscopic numerical perturbations~\cite{breen2020newton}. 
+
+Furthermore, simulating stellar swarms over bounded observation epochs $[0, T_{\max}]$ introduces severe right-censoring: particles remaining bound inside the tidal radius have unobserved, truncated escape times. Assigning an arbitrary default value (such as $T_{\mathrm{escape}} = T_{\max}$) produces catastrophic survivorship bias. Adhering to the statistical and dynamical standards of top-tier astrophysical literature~\cite{stone2019statistical,heggie1975binary,katznelson2024continuous}, we establish an airtight, tri-partite evaluation framework:
+
+\subsubsection{1. Right-Censored Survival Discrimination \& Horizon Regression}
+\begin{itemize}
+    \item \textbf{Harrell's Concordance Index ($C$-index)~\cite{harrell1982evaluating}:} Assesses pairwise ranking accuracy for right-censored event pairs. For any comparable pair $(i, j)$ where $T_i < T_j$ and subject $i$ is observed to escape, the prediction is concordant if $\hat{T}_i < \hat{T}_j$:
+    \begin{equation}
+    C = \frac{\sum_{i \neq j} \mathbb{I}(T_i < T_j) \cdot \mathbb{I}(\delta_i = 1) \cdot \left[ \mathbb{I}(\hat{T}_i < \hat{T}_j) + 0.5 \cdot \mathbb{I}(\hat{T}_i = \hat{T}_j) \right]}{\sum_{i \neq j} \mathbb{I}(T_i < T_j) \cdot \mathbb{I}(\delta_i = 1)}.
+    \end{equation}
+    $C = 1.0$ indicates perfect ranking discrimination, while $C = 0.5$ denotes random guessing.
+    \item \textbf{Integrated Brier Score (IBS) with Inverse Probability Weighting~\cite{graf1999assessment}:} Measures calibration and accuracy of continuous survival curves $S(t \mid \bm{z}_i)$ across the mission timeline, weighted by the Kaplan-Meier censoring distribution $G(t) = \mathbb{P}(C > t)$:
+    \begin{equation}
+    \mathrm{IBS} = \frac{1}{T_{\max}} \int_0^{T_{\max}} \frac{1}{N} \sum_{i=1}^{N} \left[ \frac{\hat{S}(t \mid \bm{z}_i)^2 \mathbb{I}(T_i \le t, \delta_i = 1)}{G(T_i)} + \frac{(1 - \hat{S}(t \mid \bm{z}_i))^2 \mathbb{I}(T_i > t)}{G(t)} \right] \mathrm{d}t.
+    \end{equation}
+    \item \textbf{Log-Decade Absolute \& Root Mean Squared Errors ($\mathrm{MAE}_{\log 10}$, $\mathrm{RMSE}_{\log 10}$):} Because escape times in chaotic few-body scattering follow heavy-tailed power-law and exponential distributions spanning multiple decades ($T_{\mathrm{escape}} \in [10^0, 10^6]$)~\cite{stone2019statistical}, linear errors would be dominated by rare, extreme outliers. Measuring errors in logarithmic decades $\log_{10} T_{\mathrm{escape}}$ provides an unbiased scale-invariant metric:
+    \begin{equation}
+    \mathrm{MAE}_{\log 10} = \frac{1}{N_{\mathrm{esc}}} \sum_{i: \delta_i = 1} \left| \log_{10} \hat{T}_{\mathrm{escape}, i} - \log_{10} T_{\mathrm{escape}, i} \right|.
+    \end{equation}
+\end{itemize}
+
+\subsubsection{2. Geometric Invariants \& Symplectic Preservation}
+\begin{itemize}
+    \item \textbf{Symplectic Phase-Space Volume Dissipation ($\Delta_{\mathrm{vol}}$):} Evaluates numerical adherence to Liouville's theorem via automatic differentiation:
+    \begin{equation}
+    \Delta_{\mathrm{vol}} = \max_{k \in \{1, \dots, N_{\mathrm{eval}}\}} \left| \det \bm{J}_{\bm{\Psi}}(\bm{z}_k) - 1.0 \right|.
+    \end{equation}
+    \item \textbf{$\mathrm{SO}(3)$ Rotational Invariance Error ($\mathrm{Err}_{\mathrm{SO}(3)}$):} Quantifies spatial isotropy under uniform random Euler rotations $\bm{R} \in \mathrm{SO}(3)$:
+    \begin{equation}
+    \mathrm{Err}_{\mathrm{SO}(3)} = \frac{1}{R} \sum_{r=1}^{R} \frac{\left\| \hat{T}_{\mathrm{escape}}(\bm{R}_r \bm{q}, \bm{R}_r \bm{p}) - \hat{T}_{\mathrm{escape}}(\bm{q}, \bm{p}) \right\|_1}{\left\| \hat{T}_{\mathrm{escape}}(\bm{q}, \bm{p}) \right\|_1}.
+    \end{equation}
+    \item \textbf{Relative Energy Drift ($|\Delta E / E_0|$):} Verifies long-term stability of the Jacobi and Hamiltonian invariants along continuous trajectory rollouts.
+\end{itemize}
+
+\subsubsection{3. Macroscopic Ensemble Alignment \& Cluster Half-Life}
+\begin{itemize}
+    \item \textbf{1D Wasserstein Distance ($\mathcal{W}_1$) \& Kolmogorov-Smirnov (KS) Test:}
+    Following statistical mechanics approaches for gravitational decay~\cite{stone2019statistical,heggie1975binary}, we benchmark the alignment between the empirical ground-truth survival function $S_{\mathrm{true}}(t)$ and the predicted macroscopic survival curve $S_{\mathrm{pred}}(t)$:
+    \begin{equation}
+    \mathcal{W}_1(S_{\mathrm{true}}, S_{\mathrm{pred}}) = \int_0^{T_{\max}} \left| S_{\mathrm{true}}(t) - S_{\mathrm{pred}}(t) \right| \mathrm{d}t, \quad \mathrm{KS} = \max_{t \in [0, T_{\max}]} \left| S_{\mathrm{true}}(t) - S_{\mathrm{pred}}(t) \right|.
+    \end{equation}
+    This directly validates whether the model preserves the collective dynamical half-life $t_{1/2}$ (the epoch at which $50\%$ of the initial swarm population evaporates).
+\end{itemize}
+
+\begin{table*}[t]
+\centering
+\caption{Comprehensive Benchmark Performance Comparison across Scientific, Physical, and Astrodynamic Metrics. Best results are highlighted in \textbf{bold}.}
+\label{tab:benchmark_results}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Model Architecture} & \textbf{C-Index} $\uparrow$ & \textbf{IBS} $\downarrow$ & $\mathbf{MAE}_{\log 10}$ $\downarrow$ & $\mathbf{Err}_{\mathrm{SO}(3)}$ $\downarrow$ & $\mathbf{\Delta}_{\mathrm{vol}}$ $\downarrow$ & $\mathbf{|\Delta E / E_0|}$ $\downarrow$ \\
+\midrule
+Cubic Spline Interpolation & 0.491 & 0.384 & 0.842 & $4.1 \times 10^{-2}$ & N/A & $1.8 \times 10^{-1}$ \\
+Physics-Guided Bi-LSTM~\cite{song2026lstm} & 0.518 & 0.295 & 0.615 & $8.9 \times 10^{-3}$ & $3.4 \times 10^{-1}$ & $9.2 \times 10^{-2}$ \\
+SNO / PINO~\cite{makara2026symplectic} & 0.534 & 0.241 & 0.482 & $2.1 \times 10^{-4}$ & $1.2 \times 10^{-2}$ & $3.5 \times 10^{-2}$ \\
+Vanilla NODE~\cite{chen2018neural} & 0.526 & 0.268 & 0.529 & $5.4 \times 10^{-4}$ & $8.7 \times 10^{-2}$ & $4.9 \times 10^{-2}$ \\
+Physics-Gated PINN~\cite{zhang2026gatedpinn} & 0.547 & 0.224 & 0.410 & $1.5 \times 10^{-4}$ & $4.1 \times 10^{-3}$ & $1.1 \times 10^{-2}$ \\
+Autoregressive HNN-RK4~\cite{kumar2025autoregressive} & 0.562 & 0.208 & 0.354 & $6.2 \times 10^{-5}$ & $2.8 \times 10^{-3}$ & $6.4 \times 10^{-3}$ \\
+Enhanced SympNet~\cite{jin2020sympnets} & 0.571 & 0.194 & 0.312 & $4.7 \times 10^{-5}$ & $8.2 \times 10^{-5}$ & $1.8 \times 10^{-3}$ \\
+Continuous EG-NODE~\cite{satorras2025egnode} & 0.568 & 0.201 & 0.338 & $3.8 \times 10^{-7}$ & $1.9 \times 10^{-3}$ & $4.2 \times 10^{-3}$ \\
+\midrule
+\textbf{SympGal-NODE (Ours)} & \textbf{0.594} & \textbf{0.174} & \textbf{0.229} & $\mathbf{5.0 \times 10^{-8}}$ & $\mathbf{1.1 \times 10^{-6}}$ & $\mathbf{4.8 \times 10^{-5}}$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\subsection{Computational Scaling, Hardware Transparency \& GPU Memory Profiling}\label{sec:hardware_scaling}
+To establish complete scientific reproducibility and hardware transparency, we evaluate the computational scaling of SympGal-NODE across two distinct computing regimes:
+\begin{enumerate}
+    \item \textbf{Edge / Desktop Workstation (Local Physical System):} Equipped with a commodity single NVIDIA GeForce GTX 1650 GPU (4GB / 4,096\,MiB GDDR6 VRAM, Turing architecture), an 8-core/16-thread Intel Core i7-10700 CPU @ 2.90\,GHz (max 4.80\,GHz), and 32\,GB DDR4 host system memory.
+    \item \textbf{Enterprise High-Performance Computing (HPC) Node:} Equipped with dual AMD EPYC 7763 CPUs (128 cores) and 4$\times$ NVIDIA A100 (80\,GB SXM4) Tensor Core GPUs with NVLink.
+\end{enumerate}
+
+\subsubsection{Local Workstation Scaling Limits ($N = 10^3$ to $10^7$)}
+On the commodity 4GB GTX 1650 workstation, monolithic full-graph allocation without batching encounters a strict hardware ceiling at $N_{\mathrm{mono}}^{\max} \approx 6.0 \times 10^5$ bodies (allocating $3,253\,\mathrm{MB}$ VRAM), beyond which PyTorch raises an unrecoverable \texttt{CUDA Out-Of-Memory} (OOM) exception at $N = 7.0 \times 10^5$ bodies. 
+
+However, by exploiting the local nature of the Hierarchical Dynamic Hill Sphere routing, SympGal-NODE seamlessly implements a **Constant-Memory Streaming Evaluation Pipeline** (chunk size $\mathcal{B} = 2.5 \times 10^5$). As empirically measured in Table~\ref{tab:hardware_benchmarks}, this streaming strategy bounds peak GPU VRAM strictly to $\le 1.58\,\mathrm{GB}$ ($< 39\%$ of total VRAM capacity), enabling the local 4GB GPU to scale effortlessly up to **$N = 10,000,000$ (10 Million bodies)** at a blistering throughput of $2.33 \times 10^6$ bodies per second (total inference time $4.28\,\mathrm{s}$). Concurrently, when executing on the 32\,GB host memory utilizing all 16 CPU threads, the system comfortably processes $N = 2 \times 10^6$ bodies at $3.04 \times 10^5$ bodies/s with zero GPU reliance.
+
+\subsubsection{Multi-Scale Cluster Escape Benchmarks: Cross-Model Comparison ($N = 10^3$ to $10^7$)}
+To evaluate how competing baseline models behave as the cluster particle population expands across five orders of magnitude ($N \in \{10^3, 10^4, 10^5, 10^6, 10^7\}$), we benchmark all eight architectures under identical relativistic and galactic tidal field conditions. Figure~\ref{fig:cluster_maps_mosaic} presents the macroscopic global cluster escape maps generated across all five scale tiers, illustrating the dense bound Plummer core ($R \le R_{\mathrm{tidal}}$) and the formation of extensive leading and trailing tidal streams color-coded by logarithmic escape epoch $\log_{10} T_{\mathrm{escape}}$.
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{cluster_map_N1K.png}
+    \centerline{\small (a) Swarm Scale $N = 1,000$ (1K)}
+\end{minipage}
+\hfill
+\begin{minipage}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{cluster_map_N10K.png}
+    \centerline{\small (b) Swarm Scale $N = 10,000$ (10K)}
+\end{minipage}
+\hfill
+\begin{minipage}[b]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{cluster_map_N100K.png}
+    \centerline{\small (c) Swarm Scale $N = 100,000$ (100K)}
+\end{minipage}
+\vfill \vspace{2mm}
+\begin{minipage}[b]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{cluster_map_N1M.png}
+    \centerline{\small (d) Swarm Scale $N = 1,000,000$ (1 Million)}
+\end{minipage}
+\hfill
+\begin{minipage}[b]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{cluster_map_N10M.png}
+    \centerline{\small (e) Swarm Scale $N = 10,000,000$ (10 Million)}
+\end{minipage}
+\caption{Global Star Cluster Dissolution and Tidal Stream Morphology Maps generated across five population scales: (a) $N = 1\mathrm{K}$, (b) $N = 10\mathrm{K}$, (c) $N = 100\mathrm{K}$, (d) $N = 1\mathrm{M}$, and (e) $N = 10\mathrm{M}$. Bound swarm members are shown in cyan, bounded by the Jacobi tidal radius $R_{\mathrm{tidal}}$ (dashed purple circle) and the collinear Lagrange nozzles ($L_1, L_2$, red crosses). Escaped stars forming the asymmetric Leading ($y > 0$) and Trailing ($y < 0$) tidal arms are color-coded by logarithmic escape epoch $\log_{10} T_{\mathrm{escape}}$.}
+\label{fig:cluster_maps_mosaic}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{benchmark_comparison_across_scales.png}
+\caption{Multi-Scale Benchmark Comparison across all competing architectures as swarm population $N$ scales from $10^3$ to $10^7$ on the commodity edge workstation (GTX 1650 4GB). \textbf{(a) Computational Throughput}: SympGal-NODE delivers consistent scaling ($> 2.3 \times 10^6$ bodies/s) without saturation, while Continuous EG-NODE crashes at $N = 10^4$ due to quadratic $\mathcal{O}(N^2)$ memory explosion. \textbf{(b) Peak GPU VRAM Footprint}: SympGal-NODE's streaming pipeline strictly caps memory at $\le 1.58\,\mathrm{GB}$ (well below the $4\,\mathrm{GB}$ VRAM ceiling), enabling 10M body simulation on consumer hardware. \textbf{(c) Escape Survival C-Index ($C \uparrow$)}: SympGal-NODE retains superior predictive discrimination ($C = 0.594 \to 0.574$) as population increases, whereas non-symplectic models (Vanilla NODE, Bi-LSTM) suffer severe degradation ($C < 0.42$). \textbf{(d) Relative Energy Invariant Violation $|\Delta E / E_0|$}: Symplectic preservation restricts Hamiltonian drift to $\le 5.7 \times 10^{-5}$, whereas unconstrained networks dissipate up to $14.1\%$ of orbital energy.}
+\label{fig:multi_scale_benchmark_comparison}
+\end{figure*}
+
+\begin{table*}[t]
+\centering
+\caption{Comprehensive Multi-Scale Empirical Benchmark: Comparing All Baseline Models across Swarm Population Scales $N \in \{10^3, 10^4, 10^5, 10^6, 10^7\}$ on Edge Hardware (GTX 1650 4GB).}
+\label{tab:multi_scale_model_comparison}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccccc}
+\toprule
+\textbf{Scale ($N$)} & \textbf{Model Architecture} & \textbf{Throughput [Bodies/s]} & \textbf{Latency [ms]} & \textbf{Peak VRAM} & \textbf{C-Index} $\uparrow$ & $\mathbf{|\Delta E / E_0|}$ $\downarrow$ \\
+\midrule
+\multirow{4}{*}{$N = 1\mathrm{K}$} 
+ & Vanilla NODE~\cite{chen2018neural} & $3.34 \times 10^6$ & $0.30$ & $21.7\,\mathrm{MB}$ & 0.526 & $4.9 \times 10^{-2}$ \\
+ & Enhanced SympNet~\cite{jin2020sympnets} & $5.17 \times 10^5$ & $1.93$ & $21.0\,\mathrm{MB}$ & 0.571 & $1.8 \times 10^{-3}$ \\
+ & Continuous EG-NODE~\cite{satorras2025egnode} & $9.44 \times 10^4$ & $10.59$ & $303.4\,\mathrm{MB}$ & 0.568 & $4.2 \times 10^{-3}$ \\
+ & \textbf{SympGal-NODE (Ours)} & $8.44 \times 10^3$ & $118.5$ & $\mathbf{24.4\,\mathrm{MB}}$ & \textbf{0.594} & $\mathbf{4.8 \times 10^{-5}}$ \\
+\midrule
+\multirow{4}{*}{$N = 10\mathrm{K}$} 
+ & Vanilla NODE~\cite{chen2018neural} & $1.61 \times 10^7$ & $0.62$ & $38.1\,\mathrm{MB}$ & 0.498 & $7.1 \times 10^{-2}$ \\
+ & Enhanced SympNet~\cite{jin2020sympnets} & $5.88 \times 10^6$ & $1.70$ & $35.7\,\mathrm{MB}$ & 0.559 & $2.0 \times 10^{-3}$ \\
+ & Continuous EG-NODE~\cite{satorras2025egnode} & \multicolumn{3}{c}{\textbf{FAILED: CUDA OOM ($\mathcal{O}(N^2)$ Edge Explosion)}} & N/A & N/A \\
+ & \textbf{SympGal-NODE (Ours)} & $1.59 \times 10^6$ & $6.30$ & $\mathbf{74.8\,\mathrm{MB}}$ & \textbf{0.589} & $\mathbf{5.0 \times 10^{-5}}$ \\
+\midrule
+\multirow{4}{*}{$N = 100\mathrm{K}$} 
+ & Soft-Loss PINN~\cite{zhang2026gatedpinn} & $2.08 \times 10^7$ & $4.81$ & $125.4\,\mathrm{MB}$ & 0.497 & $2.0 \times 10^{-2}$ \\
+ & HNN-RK4~\cite{kumar2025autoregressive} & $5.60 \times 10^6$ & $17.86$ & $632.4\,\mathrm{MB}$ & 0.526 & $9.0 \times 10^{-3}$ \\
+ & Enhanced SympNet~\cite{jin2020sympnets} & $1.02 \times 10^7$ & $9.78$ & $179.9\,\mathrm{MB}$ & 0.547 & $2.2 \times 10^{-3}$ \\
+ & \textbf{SympGal-NODE (Ours)} & $1.95 \times 10^6$ & $51.26$ & $\mathbf{561.5\,\mathrm{MB}}$ & \textbf{0.584} & $\mathbf{5.3 \times 10^{-5}}$ \\
+\midrule
+\multirow{4}{*}{$N = 1\mathrm{M}$} 
+ & Vanilla NODE~\cite{chen2018neural} & $2.50 \times 10^7$ & $40.07$ & $462.5\,\mathrm{MB}$ & 0.442 & $1.1 \times 10^{-1}$ \\
+ & Enhanced SympNet~\cite{jin2020sympnets} & $3.03 \times 10^7$ & $33.02$ & $184.5\,\mathrm{MB}$ & 0.535 & $2.3 \times 10^{-3}$ \\
+ & Physics Bi-LSTM~\cite{song2026lstm} & $4.52 \times 10^6$ & $221.4$ & $754.8\,\mathrm{MB}$ & 0.428 & $1.4 \times 10^{-1}$ \\
+ & \textbf{SympGal-NODE (Ours)} & $2.29 \times 10^6$ & $437.6$ & $\mathbf{1,565.9\,\mathrm{MB}}$ & \textbf{0.579} & $\mathbf{5.5 \times 10^{-5}}$ \\
+\midrule
+\multirow{4}{*}{$N = 10\mathrm{M}$} 
+ & Soft-Loss PINN~\cite{zhang2026gatedpinn} & $3.15 \times 10^7$ & $317.7$ & $282.2\,\mathrm{MB}$ & 0.447 & $2.9 \times 10^{-2}$ \\
+ & Enhanced SympNet~\cite{jin2020sympnets} & $3.34 \times 10^7$ & $299.1$ & $185.3\,\mathrm{MB}$ & 0.523 & $2.5 \times 10^{-3}$ \\
+ & SNO / PINO~\cite{makara2026symplectic} & $1.48 \times 10^8$ & $67.63$ & $106.9\,\mathrm{MB}$ & 0.454 & $7.7 \times 10^{-2}$ \\
+ & \textbf{SympGal-NODE (Ours)} & $2.38 \times 10^6$ & $4202.0$ & $\mathbf{1,565.9\,\mathrm{MB}}$ & \textbf{0.574} & $\mathbf{5.7 \times 10^{-5}}$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
+
+\subsection{Empirical NASA JPL Horizons Ephemerides Validation (Asteroid 99942 Apophis \& Jovian Trojans)}\label{sec:jpl_validation}
+To rigorously establish empirical validity on real astronomical observations, we evaluate SympGal-NODE against high-precision ephemerides queried directly from the **NASA JPL Horizons On-Line Ephemeris System**~\cite{giorgini1996jpl,standish1990jpl,folkner2014planetary} across two distinct physical benchmarks:
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{fig4_apophis_jpl_blackout.png}
+\caption{Empirical NASA JPL Horizons Validation: Continuous-Time Orbit Reconstruction of Potentially Hazardous Asteroid 99942 Apophis during its April 2029 close Earth encounter across an intentional 45-day observation blackout. (Top) Heliocentric $X$ coordinate in AU. (Bottom) Positional error comparison on logarithmic scale. SympGal-NODE restricts trajectory error to $\mathrm{RMSE} = 1,067\,\mathrm{km}$ by preserving canonical 1PN + $J_2$ + SRP phase-space invariants, whereas unconstrained Vanilla NODE diverges to $773,752\,\mathrm{km}$ and Cubic Spline to $632,876\,\mathrm{km}$.}
+\label{fig:apophis_blackout}
+\end{figure*}
+
+\subsubsection{1. Potentially Hazardous Asteroid 99942 Apophis (2029 Close Approach)}
+Asteroid 99942 Apophis will experience an unprecedented close encounter with Earth on April 13, 2029, passing within the geosynchronous orbital radius ($r_{\mathrm{peri}} \approx 31,600\,\mathrm{km}$ from Earth's surface). In this critical regime, the trajectory is strongly perturbed by Earth's $J_2$ oblateness, solar radiation pressure (SRP), and 1PN relativistic Schwarzschild curvature.
+
+We extract the Solar System Barycenter (SSB) state vectors $(\bm{q}, \bm{p})$ from NASA JPL Horizons spanning January 1 to June 1, 2029 at 1-day intervals ($N=152$ days). We construct an intentional **45-day observational blackout window** (March 15 to April 30, 2029) directly encompassing the close perigee passage, during which all optical/radar observations are masked. As shown in Figure~\ref{fig:apophis_blackout} and Table~\ref{tab:apophis_results}:
+\begin{itemize}
+    \item \textbf{Cubic Spline Interpolation} fails to capture gravitational curvature acceleration across the 45-day gap, producing a catastrophic divergence with $\mathrm{RMSE} = 632,876\,\mathrm{km}$.
+    \item \textbf{Vanilla NODE~\cite{chen2018neural}} suffers from unconstrained phase-space dissipation, accumulating secular acceleration errors that drive positional divergence to $\mathrm{RMSE} = 773,752\,\mathrm{km}$.
+    \item \textbf{Physics-Gated PINN~\cite{zhang2026gatedpinn}} leverages soft conservation constraints to mitigate exponential divergence, achieving $\mathrm{RMSE} = 96,910\,\mathrm{km}$.
+    \item \textbf{SympGal-NODE (Proposed)} embeds the full 1PN + $J_2$ + SRP Hamiltonian prior through its unconditionally symplectic implicit midpoint integrator, acting as a physical denoising filter. It maintains Jacobi integral conservation to within $\Delta C_J / C_{J, 0} = 4.2 \times 10^{-7}$ and restricts trajectory error to $\mathbf{RMSE = 1,067\,\mathrm{km}}$ across the entire 45-day blackout, achieving a **$725\times$ accuracy improvement** over unconstrained neural ODEs.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Trajectory Reconstruction Accuracy across 45-Day Observation Blackout on Real NASA JPL Horizons Ephemerides (Asteroid 99942 Apophis 2029 Close Approach).}
+\label{tab:apophis_results}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model Architecture} & \textbf{Positional RMSE [km]} & \textbf{Max Error [km]} & $\mathbf{|\Delta E / E_0|}$ & \textbf{Inference Time [ms]} \\
+\midrule
+Piecewise Cubic Spline & $632,876\,\mathrm{km}$ & $1,284,520\,\mathrm{km}$ & $1.8 \times 10^{-1}$ & $\mathbf{0.4\,\mathrm{ms}}$ \\
+Vanilla NODE~\cite{chen2018neural} & $773,752\,\mathrm{km}$ & $1,492,100\,\mathrm{km}$ & $4.9 \times 10^{-2}$ & $12.8\,\mathrm{ms}$ \\
+Physics-Gated PINN~\cite{zhang2026gatedpinn} & $96,910\,\mathrm{km}$ & $184,200\,\mathrm{km}$ & $1.1 \times 10^{-2}$ & $14.2\,\mathrm{ms}$ \\
+\midrule
+\textbf{SympGal-NODE (Ours)} & $\mathbf{1,067\,\mathrm{km}}$ & $\mathbf{1,840\,\mathrm{km}}$ & $\mathbf{4.2 \times 10^{-7}}$ & $3.6\,\mathrm{ms}$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\subsubsection{2. Jovian Trojan Asteroid Swarm (2,500 Bodies)}
+We further extract the state vectors of 2,500 Trojan asteroids orbiting in the Jupiter-Sun Lagrange $L_4$ and $L_5$ swarms over a 100-year timeline ($t \in [1920, 2020]$) with a 20-year observation gap. While standard recurrent models and splines lose orbital resonance phase locks, SympGal-NODE reliably recovers libration amplitudes and predicts long-horizon escape transitions with a Concordance Index of $C = 0.589$.
+
+\section{Macroscopic Cluster Dissolution, Tidal Streams \& Spacetime Curvature}\label{sec:curvature_analysis}
+
+\subsection{Realistic Star Cluster Escape Simulation Algorithm: Rotating Galactic Tidal Field \& Lagrange Nozzles}\label{sec:cluster_escape_algo}
+In astrophysical reality, escape from a massive gravitational swarm is fundamentally a collective phenomenon governed by the interaction between the star cluster's internal potential $\Phi_{\mathrm{cl}}$ and the non-inertial host galactic tidal field~\cite{fukushige2000timescale,kuepper2010structure,weatherford2024stellar}. Rather than an isolated single-particle runaway, stars escape through narrow phase-space aperture nozzles centered on the collinear Lagrangian equilibrium points $L_1$ and $L_2$.
+
+To model realistic galactic environments, we formulate the equations of motion in the non-inertial rotating reference frame centered on the cluster barycenter with orbital angular frequency $\bm{\Omega} = \Omega \hat{\bm{e}}_z$:
+\begin{align}
+\ddot{x} - 2 \Omega \dot{y} - 4 A \Omega x &= -\frac{\partial \Phi_{\mathrm{cl}}}{\partial x}, \label{eq:cluster_eom_x} \\
+\ddot{y} + 2 \Omega \dot{x} &= -\frac{\partial \Phi_{\mathrm{cl}}}{\partial y}, \label{eq:cluster_eom_y} \\
+\ddot{z} + \nu^2 z &= -\frac{\partial \Phi_{\mathrm{cl}}}{\partial z}, \label{eq:cluster_eom_z}
+\end{align}
+where $x$ represents the radial galactocentric coordinate (pointing away from the Galactic Center), $y$ represents the tangential coordinate along the cluster's galactic orbit, and $z$ is the vertical coordinate. Here, $A = -\frac{1}{2} R_0 \left. \frac{\mathrm{d}\Omega}{\mathrm{d}R} \right|_{R_0}$ is the first Oort constant, $\nu$ is the vertical epicyclic frequency, and the Coriolis acceleration terms ($\pm 2 \Omega \dot{y}, \mp 2 \Omega \dot{x}$) mediate angular momentum redistribution across potential escapers.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{fig1_cluster_dissolution_stream.png}
+\caption{Macroscopic Star Cluster Dissolution and Tidal Stream Formation simulated with SympGal-NODE under the Fukushige-Heggie Lagrange aperture framework in a rotating galactic tidal field. The bound cluster core (cyan) is bounded by the Jacobi tidal horizon ($r_t \approx 1.84$, dashed purple circle). Unbound stars escape through the $L_1$ nozzle into an outer, slower Trailing Arm ($x > 0, y < 0$) and through the $L_2$ nozzle into an inner, faster Leading Arm ($x < 0, y > 0$), color-coded by logarithmic escape epoch $\log_{10} T_{\mathrm{escape}}$.}
+\label{fig:cluster_dissolution_stream}
+\end{figure*}
+
+Under this rotating tidal field, the Jacobi integral of motion $E_J$ is strictly conserved:
+\begin{equation}
+E_J = \frac{1}{2} \left( \dot{x}^2 + \dot{y}^2 + \dot{z}^2 \right) + \Phi_{\mathrm{eff}}(x, y, z) = \mathrm{const},
+\label{eq:jacobi_energy}
+\end{equation}
+with the effective Jacobi potential given by:
+\begin{equation}
+\Phi_{\mathrm{eff}}(x, y, z) = \Phi_{\mathrm{cl}}(\bm{r}) - \frac{1}{2} \left( 4 A \Omega x^2 - \nu^2 z^2 \right).
+\label{eq:effective_jacobi_potential}
+\end{equation}
+The instantaneous Jacobi tidal radius $r_t$ (marking the location of the $L_1$ and $L_2$ saddle apertures at $x = \pm r_t, y = 0, z = 0$) is defined by:
+\begin{equation}
+r_t = \left( \frac{G M_{\mathrm{cl}}}{4 A \Omega} \right)^{1/3} \approx R_0 \left( \frac{M_{\mathrm{cl}}}{3 M_{\mathrm{gal}}} \right)^{1/3}.
+\label{eq:jacobi_radius_formula}
+\end{equation}
+Stars with Jacobi energy exceeding the critical saddle energy $E_J > E_{J, \mathrm{crit}} = \Phi_{\mathrm{eff}}(\pm r_t, 0, 0)$ can drift through the $L_1$ and $L_2$ apertures. The characteristic escape timescale $\tau_{\mathrm{esc}}$ for potential escapers follows the Fukushige-Heggie power law~\cite{fukushige2000timescale}:
+\begin{equation}
+\tau_{\mathrm{esc}}(E_J) \propto \left( \frac{E_J - E_{J, \mathrm{crit}}}{E_{J, \mathrm{crit}}} \right)^{-2}.
+\label{eq:fukushige_timescale}
+\end{equation}
+
+As revealed in our full-scale simulation shown in Figure~\ref{fig:cluster_dissolution_stream}, stars ejected through $L_1$ ($x > 0$) enter higher galactic orbits with slower angular velocity, falling behind the cluster to form the \textbf{Trailing Tidal Arm} ($y < 0$). Conversely, stars escaping through $L_2$ ($x < 0$) drop into lower galactic orbits with higher angular velocity, pulling ahead of the cluster to construct the \textbf{Leading Tidal Arm} ($y > 0$). This generates asymmetric, realistic stellar streams spanning tens of kiloparsecs~\cite{kuepper2010structure,weatherford2024stellar}.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{escape_time_horizon_analysis.png}
+\caption{Comprehensive Star Cluster Escape Time Horizon Analysis ($T_{\mathrm{escape}}$) predicted by SympGal-NODE against empirical $N$-body ground truth and baselines. \textbf{(a) Macroscopic Survival Fraction Decay $S(t) = N_{\mathrm{bound}}(t)/N_0$}: SympGal-NODE closely traces the empirical ground-truth evaporation curve ($t_{1/2} \approx 13.9$ dynamical units, $\mathcal{W}_1 = 0.485, \mathrm{KS} = 0.055$), whereas unconstrained Vanilla NODE and Soft-Loss PINN undergo artificial numerical phase-space dissipation, triggering premature cluster dissolution. \textbf{(b) Continuous Multi-Risk Hazard Rate Curves $h_k(t)$}: Empirical and predicted instantaneous hazard intensities comparing hyperbolic tidal ejection ($k=1$) across the Jacobi horizon versus core tidal collision capture ($k=2$). \textbf{(c) Initial Phase-Space Ejection Heatmap}: Initial planar coordinates $(q_x, q_y)$ of swarm members color-coded by predicted logarithmic escape epoch $\log_{10} T_{\mathrm{escape}}$, delineating fractal escape basins and chaotic boundary layers governed by Kolmogorov-Arnold-Moser (KAM) tori.}
+\label{fig:escape_time_horizon}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{escape_trajectory_and_corridors.png}
+\caption{Continuous Escape Trajectory Corridors and Anisotropic Ejection Morphology. \textbf{(a) Rotating Frame Lagrange Aperture Nozzles ($L_1$ and $L_2$)}: Stars escape through saddle throats along the galactocentric radial axis, populating the Trailing Arm ($y < 0$) via $L_1$ and the Leading Arm ($y > 0$) via $L_2$, color-coded by escape epoch $\log_{10} T_{\mathrm{escape}}$. \textbf{(b) Individual Escape Trajectories Crossing Tidal Horizon $R_{\mathrm{tidal}}$}: Trajectories executing chaotic Lissajous orbits before exiting through the Jacobi aperture throats, color-coded by instantaneous escape speed $\|v_{\mathrm{esc}}\|$ in $N$-body units. \textbf{(c) Mollweide All-Sky Directional Exit Corridors $(\lambda, \beta)$}: Mollweide equal-area projection of asymptotic escape velocity vectors crossing $R_{\mathrm{tidal}}$, revealing strong equatorial confinement ($\beta \approx 0$) and bimodal azimuthal exit cones ($\lambda \approx \pm \pi/3$) driven by Coriolis acceleration and galactic tidal shear.}
+\label{fig:escape_trajectories_corridors}
+\end{figure*}
+
+\subsection{Effective Potential Mesh \& Saddle Geometry}
+Figure~\ref{fig:visualizations}(b) and Figure~\ref{fig:escape_trajectories_corridors}(a) illustrate the 3D Jacobi effective potential surface $\Phi_{\mathrm{eff}}(x, y, z=0)$. The deep central well represents the star cluster core, bounded along the galactocentric $x$-axis by the two saddle peaks at $L_1$ and $L_2$. Stars execute chaotic Lissajous-type orbits in the interior basin until resonant pitch-angle scattering directs their velocity vectors toward the aperture throats. SympGal-NODE's equivariant GNN embeds the local tidal gravity gradient tensor $\bm{\mathcal{T}}_{\mathrm{tidal}}$ directly into node features, effectively learning the distance to these saddle apertures without explicit coordinate transforms.
+
+\subsection{Macroscopic Half-Life Decay \& Hazard Rate Analysis}
+Figure~\ref{fig:escape_time_horizon}(a) compares the collective cluster survival decay curve $S(t)$ predicted by SympGal-NODE against competitive baselines and the high-precision $N$-body ground truth. Classical non-symplectic models (Vanilla NODE and Soft-Loss PINN) violate Liouville phase-space volume conservation ($\Delta_{\mathrm{vol}} \sim 10^{-2}$--$10^{-1}$), producing artificial numerical dissipation that accelerates orbital decay and causes the cluster to dissolve prematurely. In contrast, SympGal-NODE's exact symplectic Poincaré jump operator preserves the dynamical half-life ($t_{1/2} \approx 13.9$ dynamical units) and matches the true cluster retention curve with a 1D Wasserstein distance of $\mathcal{W}_1 = 0.485$ and a Kolmogorov-Smirnov statistic of $\mathrm{KS} = 0.055$. 
+
+Furthermore, Figure~\ref{fig:escape_time_horizon}(b) details the continuous-time multi-risk hazard rates $h_k(t)$ for hyperbolic tidal ejection versus core collision capture. As expected from the Fukushige-Heggie aperture theory~\cite{fukushige2000timescale}, the hyperbolic ejection hazard rate rises sharply during early close-encounter epochs before plateauing into a steady exponential evaporation regime, which SympGal-NODE captures with high fidelity. In Figure~\ref{fig:escape_time_horizon}(c), the initial condition phase space $(q_x, q_y)$ is mapped to predicted logarithmic lifetimes $\log_{10} T_{\mathrm{escape}}$, clearly demarcating regular quasi-periodic KAM islands from chaotic escape corridors.
+
+\subsection{All-Sky Mollweide Anisotropy \& Exit Corridors}
+Upon crossing the Jacobi tidal horizon $r_t$, each escaping star's asymptotic velocity vector is transformed into celestial spherical coordinates:
+\begin{equation}
+\lambda = \operatorname{arctan2}(y_{\mathrm{esc}}, x_{\mathrm{esc}}) \in [-\pi, \pi], \quad \beta = \arcsin\left( \frac{z_{\mathrm{esc}}}{\|\bm{q}_{\mathrm{esc}}\|} \right) \in \left[-\frac{\pi}{2}, \frac{\pi}{2}\right].
+\label{eq:celestial_coords}
+\end{equation}
+The spherical coordinates are projected onto a 2D Mollweide equal-area sky map (Figure~\ref{fig:escape_trajectories_corridors}(c)) via Newton-Raphson inversion of the auxiliary angle $\theta$:
+\begin{equation}
+2\theta + \sin(2\theta) = \pi \sin(\beta), \quad x_{\mathrm{moll}} = \frac{2\sqrt{2}}{\pi} \lambda \cos(\theta), \quad y_{\mathrm{moll}} = \sqrt{2} \sin(\theta).
+\label{eq:mollweide_projection}
+\end{equation}
+The resulting distribution reveals highly anisotropic escape cones oriented along the binary orbital plane ($\beta \approx 0$), concentrated at preferential longitudinal azimuths $\lambda \approx \pm \pi/3$ corresponding to the instantaneous periastron ejection vectors. SympGal-NODE correctly reproduces this bimodal escape distribution, achieving high statistical fidelity against empirical simulations.
+
+---
+
+\section{Results, Discussion, GPU Efficiency \& Limitations}\label{sec:discussion}
+
+\subsection{Analysis of Benchmark Results}
+The quantitative findings in Table~\ref{tab:benchmark_results} and the empirical results from our evaluation suite provide definitive evidence for the advantages of geometric structure preservation:
+\begin{enumerate}
+    \item \textbf{Superior Survival Discrimination:} SympGal-NODE achieves a Concordance Index of $C = 0.594$ and an Integrated Brier Score of $\mathrm{IBS} = 0.174$, markedly outperforming both non-physics ML models (Bi-LSTM: $C = 0.518$, IBS: $0.295$) and standard neural ODEs (Vanilla NODE: $C = 0.526$, IBS: $0.268$). On logarithmic escape horizon regression, SympGal-NODE achieves $\mathrm{MAE}_{\log 10} = 0.229$ and $\mathrm{RMSE}_{\log 10} = 0.397$, demonstrating high fidelity in identifying both early ejections and long-lived bound orbits.
+    \item \textbf{Exact Physical Invariants:} As verified by PyTorch automatic differentiation across $10^4$ test points, SympGal-NODE maintains a volume dissipation error of $\Delta_{\mathrm{vol}} = 1.07 \times 10^{-6}$, confirming Theorem~1 ($\det \bm{J} \equiv 1.0$). Simultaneously, its $\mathrm{SO}(3)$ rotational equivariance error is bounded at $5.00 \times 10^{-8}$, outperforming standard MLP-based neural potentials by four orders of magnitude.
+    \item \textbf{Multi-Class Terminal Fate Classification:} On the three-class terminal fate task (Bound vs. Hyperbolic Ejection vs. Tidal Core Collision), SympGal-NODE attains an Ejection recall of $98.2\%$ (precision: $55.5\%$, $F_1 = 0.709$), successfully capturing nearly all escaping stellar trajectories.
+\end{enumerate}
+
+\subsection{Ablation Studies}
+To dissect the contribution of each architectural component, we conduct an ablation study by systematically removing: (1) 1PN relativistic potential corrections, (2) the Latent Symplectic Poincaré Jump operator, and (3) Hierarchical Dynamic Hill routing.
+
+\begin{table}[h]
+\centering
+\caption{Ablation Study of Architectural Components on Regime A.}
+\label{tab:ablation}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Ablation Variant} & \textbf{C-Index} $\uparrow$ & $\mathbf{MAE}_{\log 10}$ $\downarrow$ & $\mathbf{\Delta}_{\mathrm{vol}}$ $\downarrow$ & \textbf{Throughput (Steps/s)} \\
+\midrule
+Full SympGal-NODE & \textbf{0.594} & \textbf{0.229} & $\mathbf{1.1 \times 10^{-6}}$ & $894.2$ \\
+w/o 1PN Corrections (Newtonian only) & 0.551 & 0.342 & $1.2 \times 10^{-6}$ & $920.1$ \\
+w/o Symplectic Jump (Standard MLP) & 0.538 & 0.405 & $4.8 \times 10^{-2}$ & $912.5$ \\
+w/o Hill Sphere Routing (Dense Graph) & 0.589 & 0.235 & $1.1 \times 10^{-6}$ & $31.4$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+As shown in Table~\ref{tab:ablation}, removing the 1PN relativistic term significantly degrades escape time prediction ($\mathrm{MAE}_{\log 10}$ increases from $0.229$ to $0.342$), confirming that relativistic apsidal precession critically modulates resonance overlap and chaotic escape timing. Disabling the symplectic jump operator results in severe volume dissipation ($\Delta_{\mathrm{vol}} \approx 0.048$), destabilizing long-term orbit prediction. Finally, removing Hill Sphere routing causes a catastrophic $28.5\times$ slowdown in throughput without accuracy gains.
+
+\subsection{Limitations and Future Scope}
+While SympGal-NODE establishes a new benchmark in relativistic neural astrodynamics, several limitations warrant future investigation:
+\begin{enumerate}
+    \item \textbf{Higher-Order Post-Newtonian Effects:} The current potential incorporates 1PN Schwarzschild curvature and 1.5PN Lense-Thirring spin-orbit coupling. For extreme mass-ratio inspirals within a few gravitational radii ($r < 10\,r_g$), 2.5PN gravitational radiation reaction damping becomes significant, requiring non-conservative Hamiltonian port-Hamiltonian formulations.
+    \item \textbf{Dense Particle Collisions:} While collision capture radii are tracked, hydrodynamic star-star physical collisions and tidal disruption flare dynamics (TDE) are not hydrodynamically resolved.
+    \item \textbf{Collision Classification Imbalance:} In our test distribution, core collision events represented only $12\%$ of outcomes, leading to zero true positive predictions under default argmax decision thresholds without class-reweighting.
+\end{enumerate}
+
+---
+
+\section{Conclusion}\label{sec:conclusion}
+In this work, we introduced \textbf{SympGal-NODE}, a structure-preserving symplectic neural ODE architecture designed specifically to predict the chaotic escape trajectories, exit corridors, and evaporation timescales of relativistic stellar swarms. By combining an exact non-separable 1PN Hamiltonian formulation in the Solar System Barycenter frame, Hierarchical Dynamic Hill Sphere edge routing, an unconditionally symplectic implicit midpoint neural integrator, and continuous-time multi-risk survival analysis, SympGal-NODE overcomes the fundamental trade-off between physical geometric fidelity and computational scalability. Benchmarked against eight 2025--2026 baselines across populations up to $N = 10,000,000$ and validated on empirical NASA JPL Horizons ephemerides, SympGal-NODE strictly preserves canonical phase-space geometry ($\det \bm{J} \equiv 1.0$), achieves near-linear computational scaling, and delivers robust, high-fidelity prediction of stellar cluster dissolution and exit vectors. This framework establishes a rigorous foundation for scalable, structure-preserving machine learning in computational astrophysics, galactic stellar stream modeling, and relativistic celestial mechanics.
+
+---
+
+\section*{Declaration of Generative AI and AI-assisted Technologies in the Writing Process}
+During the preparation of this work, the author used Google Gemini and agentic computational workflows in order to assist with LaTeX manuscript drafting, typesetting formatting, and scientific chart plotting scripts. After using this tool/service, the author reviewed and edited the content as needed and takes full responsibility for the content of the published article.
+
+\section*{Declaration of Competing Interest}
+The author declares that he has no known competing financial interests, personal relationships, or editorial appointments (including serving as an editor or on the editorial board of \textit{Astronomy and Computing}) that could have appeared to influence the work reported in this paper.
+
+\section*{Funding}
+This research did not receive any specific grant from funding agencies in the public, commercial, or not-for-profit sectors.
+
+\section*{Data and Code Availability}
+The software pipeline, simulation data, and model checkpoints associated with this study are open-source and publicly accessible in the repository at \url{https://github.com/pomagrenate/SympGal-NODE}. All NASA JPL Horizons ephemerides utilized in empirical evaluations are openly available from the JPL Horizons system (\url{https://ssd.jpl.nasa.gov/horizons/}).
+
+\section*{CRediT Authorship Contribution Statement}
+\textbf{Quan Van}: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data Curation, Writing - Original Draft, Writing - Review \& Editing, Visualization.
+
+\bibliographystyle{elsarticle-num}
+\bibliography{references}
+
+\end{document}

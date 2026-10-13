@@ -1,0 +1,17 @@
+DECLARATION OF COMPETING INTEREST
+
+Journal: Astronomy and Computing (Elsevier)
+Manuscript Title: SympGal-NODE: Continuous-Time Symplectic Neural ODEs for Relativistic Stellar Swarms: Predicting Escape Times, Exit Trajectories, and Tidal Horizons
+Author: Quan Van (Independent Researcher)
+Email: vanhaminhquan2406@gmail.com
+
+Declarations:
+The author declares that he has no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+Specifically:
+1. Financial Interests: The author has received no funding, grants, honoraria, or financial support from public, commercial, or not-for-profit entities for this study.
+2. Non-Financial Interests: The author holds no patents, corporate affiliations, or personal relationships that constitute a conflict of interest with the material presented in this article.
+3. Editorial Appointments: The author is not currently serving, nor has previously served, as an Editor or on the Editorial Board of Astronomy and Computing.
+
+Date: October 13, 2026
+Signature: Quan Van

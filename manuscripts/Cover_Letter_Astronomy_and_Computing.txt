@@ -1,0 +1,46 @@
+COVER LETTER FOR SUBMISSION TO ASTRONOMY AND COMPUTING (ELSEVIER)
+
+Date: October 13, 2026
+
+To:
+The Editors-in-Chief and Editorial Board
+Astronomy and Computing
+Elsevier B.V.
+
+Subject: Submission of original research paper entitled "SympGal-NODE: Continuous-Time Symplectic Neural ODEs for Relativistic Stellar Swarms: Predicting Escape Times, Exit Trajectories, and Tidal Horizons"
+
+Dear Editors-in-Chief and Editorial Board Members,
+
+I am pleased to submit our original research manuscript entitled "SympGal-NODE: Continuous-Time Symplectic Neural ODEs for Relativistic Stellar Swarms: Predicting Escape Times, Exit Trajectories, and Tidal Horizons" for consideration for publication as a regular research article in Astronomy and Computing.
+
+Summary and Astrophysical/Computational Relevance:
+Simulating massive gravitational stellar swarms (N = 10^3 to 10^7 bodies) in relativistic regimes—such as galactic nuclei, circumbinary disks, and hierarchical stellar triples—poses severe challenges. Classical direct N-body force evaluations suffer from quadratic O(N^2) scaling, while conventional scientific machine learning models (Vanilla Neural ODEs, PINNs, and LSTMs) lack canonical symplectic structure, leading to unphysical phase-space volume dissipation, secular energy drift, and failure during observational blackouts.
+
+In this work, we propose SympGal-NODE, an end-to-end structure-preserving geometric deep learning framework:
+1. Exact Relativistic Hamiltonian Mechanics: Formulated in the Solar System Barycenter (SSB) frame, rigorously incorporating 1PN Post-Newtonian Schwarzschild precession, J2 planetary oblateness, solar radiation pressure (SRP), and 1.5PN Lense-Thirring gravitomagnetic coupling.
+2. Hierarchical Dynamic Hill Sphere Routing: Reduces O(N^2) dense graph complexity to near-linear O(N), enabling unprecedented scalability up to N = 10,000,000 bodies.
+3. Unconditionally Symplectic Implicit Midpoint Integrator: Mathematically guarantees Liouville phase-space volume conservation (det(J) = 1.0, volume dissipation error bounded at 1.07 x 10^-6).
+4. Continuous-Time Multi-Risk Survival Analysis: Directly predicts long-horizon escape hazards and ejection horizons (log10 T_escape) under right-censored observation.
+5. Dual-Tier Hardware Transparency & NASA JPL Horizons Validation: Validated on empirical NASA JPL Horizons ephemerides (Asteroid 99942 Apophis 2029 blackout reconstruction and 2,500 Jovian Trojans) and demonstrated on both consumer edge hardware (GTX 1650 4GB via constant-memory streaming) and enterprise HPC clusters (NVIDIA A100).
+
+Compliance with Journal Policies:
+- This manuscript has not been published previously and is not under consideration for publication elsewhere.
+- Its publication is approved by the author.
+- The manuscript adheres strictly to Elsevier's Generative AI Policy, with a full disclosure statement placed immediately prior to the References section.
+- A Declaration of Competing Interest is provided confirming no financial, non-financial, or editorial conflicts of interest.
+- Open Science: All source codes, models, and simulation scripts are openly available at https://github.com/pomagrenate/SympGal-NODE.
+
+Suggested Reviewers:
+1. Prof. Sverre Aarseth (Institute of Astronomy, University of Cambridge) - Expert in N-body computational astrophysics and relativistic regularization.
+2. Prof. Hanno Rein (University of Toronto) - Lead developer of REBOUND and expert in symplectic celestial mechanics.
+3. Prof. George Karniadakis (Brown University) - Leading authority in Physics-Informed Neural Networks and Scientific Machine Learning.
+4. Prof. Scott Tremaine (Institute for Advanced Study, Princeton) - Pioneer in galactic dynamics and stellar cluster dissolution.
+
+Thank you very much for your time and consideration of our manuscript.
+
+Sincerely,
+
+Quan Van
+Independent Researcher
+Email: vanhaminhquan2406@gmail.com
+Country: Vietnam

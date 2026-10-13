@@ -1,15 +1,31 @@
 """
-Rigorous Scientific Evaluation Suite for SympGal-NODE:
-1. Survival Metrics:
-   - Harrell's Concordance Index (C-index) for right-censored data
-   - Integrated Brier Score (IBS) across continuous mission timeline
-   - Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE) on log10(T_escape)
-2. Physics & Stability Metrics:
-   - SO(3) Rotational Invariance Error: ||T_pred(R*q, R*p) - T_pred(q, p)||
-   - Symplectic Phase-Space Volume Dissipation: |det(J) - 1.0|
-3. Population Macroscopic Metrics:
-   - Wasserstein Distance & Kolmogorov-Smirnov (KS) test between true and predicted survival curves
-   - Multi-class Confusion Matrix and F1-scores for terminal fate classification
+Rigorous Scientific Evaluation Suite for SympGal-NODE & Chaotic Astrodynamics:
+
+Scientific Rationale & Q1/Q2 Literature Alignment:
+1. Chaos & Lyapunov Predictability Horizon:
+   In gravitational multi-body and three-body problems, positive maximal Lyapunov exponents
+   lambda > 0 induce exponential trajectory divergence: delta x(t) ~ delta x(0) * exp(lambda * t)
+   (Morbidelli 2002; Valtonen & Karttunen 2006; Breen et al. 2020, MNRAS).
+   Evaluating pointwise trajectory Euclidean error ||q_pred(t) - q_true(t)|| at long horizons
+   t >> T_Lyapunov is physically ill-posed because all models inevitably saturate the cluster diameter.
+   Therefore, Q1/Q2 standards mandate evaluating:
+   (a) Geometric Phase-Space Invariants (Symplectic 2-form, Liouville volume preservation).
+   (b) Individual Event Horizons (Escape / Ejection epoch T_escape).
+   (c) Macroscopic Population Statistical Distributions (Stone & Leigh 2019, Nature; Heggie 1975, MNRAS).
+
+2. Right-Censoring & Competing-Risk Survival Metrics:
+   In finite simulation or observation campaigns [0, T_max], bound particles have unknown true escape times.
+   Naive regression assigning T_escape = T_max introduces severe survivorship bias.
+   - Harrell's Concordance Index (C-index, Harrell et al. 1982) ranks pairs robustly under censoring.
+   - Integrated Brier Score (IBS, Graf et al. 1999) applies Inverse Probability of Censoring
+     Weighting (IPCW) via Kaplan-Meier censoring survival distribution G(t).
+   - Log-Scale Error: Mean Absolute Error and RMSE on log10(T_escape) prevent late-escape outliers
+     from dominating power-law distributed ejection timescales.
+
+3. Macroscopic Ensemble Alignment:
+   - Kolmogorov-Smirnov (KS) statistic: max_t |S_true(t) - S_pred(t)| tests identical cumulative decay.
+   - 1D Wasserstein distance (W_1) measures optimal transport work between empirical survival curves,
+     verifying the dynamical cluster half-life t_{1/2}.
 """
 
 from __future__ import annotations

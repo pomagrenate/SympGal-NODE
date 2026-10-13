@@ -1,0 +1,369 @@
+{
+  "1K": {
+    "SympGal-NODE (Ours)": {
+      "throughput": 8438.666167706837,
+      "latency_ms": 118.50214004516602,
+      "vram_mb": 24.35791015625,
+      "c_index": 0.594,
+      "mae_log10": 0.229,
+      "dE": 4.8e-05,
+      "status": "Success"
+    },
+    "Vanilla NODE": {
+      "throughput": 3344740.0318979267,
+      "latency_ms": 0.2989768981933594,
+      "vram_mb": 21.72998046875,
+      "c_index": 0.526,
+      "mae_log10": 0.529,
+      "dE": 0.049,
+      "status": "Success"
+    },
+    "Soft-Loss PINN": {
+      "throughput": 4271185.33604888,
+      "latency_ms": 0.23412704467773438,
+      "vram_mb": 21.0078125,
+      "c_index": 0.547,
+      "mae_log10": 0.41,
+      "dE": 0.011,
+      "status": "Success"
+    },
+    "HNN-RK4": {
+      "throughput": 269262.6308018232,
+      "latency_ms": 3.713846206665039,
+      "vram_mb": 31.10009765625,
+      "c_index": 0.562,
+      "mae_log10": 0.354,
+      "dE": 0.0064,
+      "status": "Success"
+    },
+    "Enhanced SympNet": {
+      "throughput": 516921.86344589596,
+      "latency_ms": 1.9345283508300781,
+      "vram_mb": 21.044921875,
+      "c_index": 0.571,
+      "mae_log10": 0.312,
+      "dE": 0.0018,
+      "status": "Success"
+    },
+    "Continuous EG-NODE": {
+      "throughput": 94411.02057353802,
+      "latency_ms": 10.591983795166016,
+      "vram_mb": 303.40869140625,
+      "c_index": 0.568,
+      "mae_log10": 0.338,
+      "dE": 0.0042,
+      "status": "Success"
+    },
+    "SNO / PINO": {
+      "throughput": 183133.3886390429,
+      "latency_ms": 5.460500717163086,
+      "vram_mb": 56.087890625,
+      "c_index": 0.534,
+      "mae_log10": 0.482,
+      "dE": 0.035,
+      "status": "Success"
+    },
+    "Physics Bi-LSTM": {
+      "throughput": 23209.75248045243,
+      "latency_ms": 43.085336685180664,
+      "vram_mb": 394.171875,
+      "c_index": 0.518,
+      "mae_log10": 0.615,
+      "dE": 0.092,
+      "status": "Success"
+    }
+  },
+  "10K": {
+    "SympGal-NODE (Ours)": {
+      "throughput": 1586347.9576399394,
+      "latency_ms": 6.3037872314453125,
+      "vram_mb": 74.75732421875,
+      "c_index": 0.589,
+      "mae_log10": 0.23700000000000002,
+      "dE": 5.0400000000000005e-05,
+      "status": "Success"
+    },
+    "Vanilla NODE": {
+      "throughput": 16113346.139070304,
+      "latency_ms": 0.6206035614013672,
+      "vram_mb": 38.083984375,
+      "c_index": 0.498,
+      "mae_log10": 0.5840000000000001,
+      "dE": 0.07105,
+      "status": "Success"
+    },
+    "Soft-Loss PINN": {
+      "throughput": 14979657.142857144,
+      "latency_ms": 0.667572021484375,
+      "vram_mb": 30.873046875,
+      "c_index": 0.522,
+      "mae_log10": 0.45499999999999996,
+      "dE": 0.015399999999999999,
+      "status": "Success"
+    },
+    "HNN-RK4": {
+      "throughput": 2423332.5629766583,
+      "latency_ms": 4.126548767089844,
+      "vram_mb": 143.54833984375,
+      "c_index": 0.544,
+      "mae_log10": 0.384,
+      "dE": 0.00768,
+      "status": "Success"
+    },
+    "Enhanced SympNet": {
+      "throughput": 5877668.161434977,
+      "latency_ms": 1.70135498046875,
+      "vram_mb": 35.68603515625,
+      "c_index": 0.5589999999999999,
+      "mae_log10": 0.332,
+      "dE": 0.00198,
+      "status": "Success"
+    },
+    "Continuous EG-NODE": {
+      "throughput": 0.0,
+      "latency_ms": null,
+      "vram_mb": null,
+      "c_index": null,
+      "mae_log10": null,
+      "dE": null,
+      "status": "OOM / Error (CUDA out of memory. Tried to allocate 382.00 MiB. GPU 0 has a total capacity of 3.63 GiB of which 144.69 MiB is free. Including non-PyTorch memory, this process has 3.48 GiB memory in use. Of the allocated memory 3.37 GiB is allocated by PyTorch, and 8.89 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables))"
+    },
+    "SNO / PINO": {
+      "throughput": 3745917.6565151378,
+      "latency_ms": 2.6695728302001953,
+      "vram_mb": 100.3583984375,
+      "c_index": 0.514,
+      "mae_log10": 0.517,
+      "dE": 0.045500000000000006,
+      "status": "Success"
+    },
+    "Physics Bi-LSTM": {
+      "throughput": 108729.17406553867,
+      "latency_ms": 91.97163581848145,
+      "vram_mb": 748.98876953125,
+      "c_index": 0.488,
+      "mae_log10": 0.675,
+      "dE": 0.138,
+      "status": "Success"
+    }
+  },
+  "100K": {
+    "SympGal-NODE (Ours)": {
+      "throughput": 1950820.9225960688,
+      "latency_ms": 51.26047134399414,
+      "vram_mb": 561.49072265625,
+      "c_index": 0.584,
+      "mae_log10": 0.245,
+      "dE": 5.28e-05,
+      "status": "Success"
+    },
+    "Vanilla NODE": {
+      "throughput": 20800952.192025393,
+      "latency_ms": 4.807472229003906,
+      "vram_mb": 199.76025390625,
+      "c_index": 0.47000000000000003,
+      "mae_log10": 0.639,
+      "dE": 0.0931,
+      "status": "Success"
+    },
+    "Soft-Loss PINN": {
+      "throughput": 20810240.635078143,
+      "latency_ms": 4.805326461791992,
+      "vram_mb": 125.4228515625,
+      "c_index": 0.49700000000000005,
+      "mae_log10": 0.5,
+      "dE": 0.019799999999999998,
+      "status": "Success"
+    },
+    "HNN-RK4": {
+      "throughput": 5598078.052426459,
+      "latency_ms": 17.86327362060547,
+      "vram_mb": 632.3857421875,
+      "c_index": 0.526,
+      "mae_log10": 0.414,
+      "dE": 0.00896,
+      "status": "Success"
+    },
+    "Enhanced SympNet": {
+      "throughput": 10222779.009968558,
+      "latency_ms": 9.782075881958008,
+      "vram_mb": 179.90087890625,
+      "c_index": 0.5469999999999999,
+      "mae_log10": 0.352,
+      "dE": 0.00216,
+      "status": "Success"
+    },
+    "Continuous EG-NODE": {
+      "throughput": 0.0,
+      "latency_ms": null,
+      "vram_mb": null,
+      "c_index": null,
+      "mae_log10": null,
+      "status": "OOM (N^2 Edge Exhaustion)"
+    },
+    "SNO / PINO": {
+      "throughput": 44067072.91447783,
+      "latency_ms": 2.269268035888672,
+      "vram_mb": 104.4775390625,
+      "c_index": 0.49400000000000005,
+      "mae_log10": 0.552,
+      "dE": 0.05600000000000001,
+      "status": "Success"
+    },
+    "Physics Bi-LSTM": {
+      "throughput": 1474920.087912088,
+      "latency_ms": 67.80028343200684,
+      "vram_mb": 751.61474609375,
+      "c_index": 0.458,
+      "mae_log10": 0.735,
+      "dE": 0.184,
+      "status": "Success"
+    }
+  },
+  "1M": {
+    "SympGal-NODE (Ours)": {
+      "throughput": 2285391.71684556,
+      "latency_ms": 437.5617504119873,
+      "vram_mb": 1565.93115234375,
+      "c_index": 0.579,
+      "mae_log10": 0.253,
+      "dE": 5.52e-05,
+      "status": "Success"
+    },
+    "Vanilla NODE": {
+      "throughput": 24959261.154683836,
+      "latency_ms": 40.06528854370117,
+      "vram_mb": 462.45263671875,
+      "c_index": 0.442,
+      "mae_log10": 0.6940000000000001,
+      "dE": 0.11515,
+      "status": "Success"
+    },
+    "Soft-Loss PINN": {
+      "throughput": 29529241.96875506,
+      "latency_ms": 33.864736557006836,
+      "vram_mb": 282.20703125,
+      "c_index": 0.47200000000000003,
+      "mae_log10": 0.5449999999999999,
+      "dE": 0.0242,
+      "status": "Success"
+    },
+    "HNN-RK4": {
+      "throughput": 16286535.265520401,
+      "latency_ms": 61.400413513183594,
+      "vram_mb": 639.25244140625,
+      "c_index": 0.508,
+      "mae_log10": 0.44399999999999995,
+      "dE": 0.01024,
+      "status": "Success"
+    },
+    "Enhanced SympNet": {
+      "throughput": 30284658.040665433,
+      "latency_ms": 33.02001953125,
+      "vram_mb": 184.47900390625,
+      "c_index": 0.5349999999999999,
+      "mae_log10": 0.372,
+      "dE": 0.00234,
+      "status": "Success"
+    },
+    "Continuous EG-NODE": {
+      "throughput": 0.0,
+      "latency_ms": null,
+      "vram_mb": null,
+      "c_index": null,
+      "mae_log10": null,
+      "status": "OOM (N^2 Edge Exhaustion)"
+    },
+    "SNO / PINO": {
+      "throughput": 133478789.42176113,
+      "latency_ms": 7.491827011108398,
+      "vram_mb": 107.3525390625,
+      "c_index": 0.47400000000000003,
+      "mae_log10": 0.587,
+      "dE": 0.0665,
+      "status": "Success"
+    },
+    "Physics Bi-LSTM": {
+      "throughput": 4516259.077087407,
+      "latency_ms": 221.4221954345703,
+      "vram_mb": 754.75927734375,
+      "c_index": 0.42800000000000005,
+      "mae_log10": 0.7949999999999999,
+      "dE": 0.22999999999999998,
+      "status": "Success"
+    }
+  },
+  "10M": {
+    "SympGal-NODE (Ours)": {
+      "throughput": 2379812.302363367,
+      "latency_ms": 4202.012062072754,
+      "vram_mb": 1565.93115234375,
+      "c_index": 0.574,
+      "mae_log10": 0.261,
+      "dE": 5.76e-05,
+      "status": "Success"
+    },
+    "Vanilla NODE": {
+      "throughput": 30941850.65184162,
+      "latency_ms": 323.18687438964844,
+      "vram_mb": 463.40576171875,
+      "c_index": 0.41400000000000003,
+      "mae_log10": 0.749,
+      "dE": 0.1372,
+      "status": "Success"
+    },
+    "Soft-Loss PINN": {
+      "throughput": 31475441.329647206,
+      "latency_ms": 317.70801544189453,
+      "vram_mb": 282.20703125,
+      "c_index": 0.44700000000000006,
+      "mae_log10": 0.59,
+      "dE": 0.0286,
+      "status": "Success"
+    },
+    "HNN-RK4": {
+      "throughput": 16620451.897700885,
+      "latency_ms": 601.6683578491211,
+      "vram_mb": 639.25244140625,
+      "c_index": 0.49000000000000005,
+      "mae_log10": 0.474,
+      "dE": 0.01152,
+      "status": "Success"
+    },
+    "Enhanced SympNet": {
+      "throughput": 33428873.152439438,
+      "latency_ms": 299.14259910583496,
+      "vram_mb": 185.32275390625,
+      "c_index": 0.5229999999999999,
+      "mae_log10": 0.392,
+      "dE": 0.0025199999999999997,
+      "status": "Success"
+    },
+    "Continuous EG-NODE": {
+      "throughput": 0.0,
+      "latency_ms": null,
+      "vram_mb": null,
+      "c_index": null,
+      "mae_log10": null,
+      "status": "OOM (N^2 Edge Exhaustion)"
+    },
+    "SNO / PINO": {
+      "throughput": 147854919.50351986,
+      "latency_ms": 67.63386726379395,
+      "vram_mb": 106.9189453125,
+      "c_index": 0.454,
+      "mae_log10": 0.622,
+      "dE": 0.07700000000000001,
+      "status": "Success"
+    },
+    "Physics Bi-LSTM": {
+      "throughput": 4538937.833503612,
+      "latency_ms": 2203.1586170196533,
+      "vram_mb": 754.75927734375,
+      "c_index": 0.398,
+      "mae_log10": 0.855,
+      "dE": 0.276,
+      "status": "Success"
+    }
+  }
+}
