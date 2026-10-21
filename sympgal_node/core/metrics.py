@@ -496,6 +496,7 @@ class ScientificEvaluationEngine:
         true_event_times: torch.Tensor,
         true_terminal_status: torch.Tensor,
         time_bins: torch.Tensor,
+        m_s: Optional[torch.Tensor] = None,
         n_rotations: int = 5,
     ) -> Dict[str, Any]:
         """
@@ -516,7 +517,7 @@ class ScientificEvaluationEngine:
         device = q.device
 
         with torch.no_grad():
-            outputs = self.model(q, p, q_m, p_m, m_m)
+            outputs = self.model(q, p, q_m, p_m, m_m, m_s=m_s)
 
         pred_times = outputs["expected_escape_time"]  # (N,)
         pred_survival = outputs["survival_curve"]     # (N, K_bins)

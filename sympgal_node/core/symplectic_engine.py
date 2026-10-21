@@ -68,20 +68,22 @@ class SymplecticEngine:
         m_m: torch.Tensor,
         spins_m: Optional[torch.Tensor],
         dt: float,
+        m_swarm: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Symplectic 2nd-order Leapfrog step with conservative 1PN + 1.5PN Lense-Thirring terms.
+        Symplectic 2nd-order Leapfrog step with conservative 1PN + 1.5PN Lense-Thirring terms
+        and mutual swarm self-gravity + mother back-reaction.
         """
-        # 1. Mother stars update (Kick-Drift-Kick under mutual gravity)
-        acc_m = self.potential.compute_mother_accelerations(q_m, p_m, m_m)
+        # 1. Mother stars update (Kick-Drift-Kick under mutual gravity and swarm pull)
+        acc_m = self.potential.compute_mother_accelerations(q_m, p_m, m_m, q_swarm=q, m_swarm=m_swarm)
         p_m_half = p_m + 0.5 * dt * acc_m
         q_m_next = q_m + dt * (p_m_half / (m_m.view(-1, 1) + 1e-12))
-        acc_m_next = self.potential.compute_mother_accelerations(q_m_next, p_m_half, m_m)
+        acc_m_next = self.potential.compute_mother_accelerations(q_m_next, p_m_half, m_m, q_swarm=q, m_swarm=m_swarm)
         p_m_next = p_m_half + 0.5 * dt * acc_m_next
 
         # 2. Swarm particles update
         dq_dt_0, dp_dt_0 = self.potential.compute_hamiltonian_derivatives(
-            q, p, q_m, p_m, m_m
+            q, p, q_m, p_m, m_m, m_swarm=m_swarm
         )
         a_lt_0 = self.potential.compute_lense_thirring_acceleration(
             q, p, q_m, p_m, m_m, spins_m
@@ -90,7 +92,7 @@ class SymplecticEngine:
         q_next = q + dt * (p_half)
 
         dq_dt_1, dp_dt_1 = self.potential.compute_hamiltonian_derivatives(
-            q_next, p_half, q_m_next, p_m_next, m_m
+            q_next, p_half, q_m_next, p_m_next, m_m, m_swarm=m_swarm
         )
         a_lt_1 = self.potential.compute_lense_thirring_acceleration(
             q_next, p_half, q_m_next, p_m_next, m_m, spins_m
@@ -108,16 +110,18 @@ class SymplecticEngine:
         m_m: torch.Tensor,
         spins_m: Optional[torch.Tensor],
         dt: float,
+        m_swarm: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Implicit Midpoint integrator:
-        Preserves the symplectic 2-form d(q) ^ d(p) exactly for non-separable Hamiltonians.
+        Preserves the symplectic 2-form d(q) ^ d(p) exactly for non-separable Hamiltonians
+        with mutual self-gravity and back-reaction.
         """
         # Advance mother stars
-        acc_m = self.potential.compute_mother_accelerations(q_m, p_m, m_m)
+        acc_m = self.potential.compute_mother_accelerations(q_m, p_m, m_m, q_swarm=q, m_swarm=m_swarm)
         p_m_half = p_m + 0.5 * dt * acc_m
         q_m_next = q_m + dt * (p_m_half / (m_m.view(-1, 1) + 1e-12))
-        acc_m_next = self.potential.compute_mother_accelerations(q_m_next, p_m_half, m_m)
+        acc_m_next = self.potential.compute_mother_accelerations(q_m_next, p_m_half, m_m, q_swarm=q, m_swarm=m_swarm)
         p_m_next = p_m_half + 0.5 * dt * acc_m_next
 
         q_m_mid = 0.5 * (q_m + q_m_next)
@@ -132,7 +136,7 @@ class SymplecticEngine:
             p_mid = 0.5 * (p + p_next)
 
             dq_dt, dp_dt = self.potential.compute_hamiltonian_derivatives(
-                q_mid, p_mid, q_m_mid, p_m_mid, m_m
+                q_mid, p_mid, q_m_mid, p_m_mid, m_m, m_swarm=m_swarm
             )
             a_lt_mid = self.potential.compute_lense_thirring_acceleration(
                 q_mid, p_mid, q_m_mid, p_m_mid, m_m, spins_m
@@ -207,6 +211,7 @@ class SymplecticEngine:
             mothers_state.masses,
             mothers_state.spins,
             step_dt,
+            m_swarm=swarm_state.masses,
         )
 
         # 3. Strang Splitting Half-Step: Dissipative Dynamical Friction Kick
@@ -252,6 +257,7 @@ class SymplecticEngine:
                 mothers_state.q,
                 mothers_state.p,
                 mothers_state.masses,
+                m_swarm=swarm_state.masses,
             )
             return float(torch.sum(H).item())
 

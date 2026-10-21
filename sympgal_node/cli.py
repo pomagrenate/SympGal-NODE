@@ -314,12 +314,16 @@ def cmd_train_model(args: argparse.Namespace) -> None:
         init_data = torch.load(init_path, map_location=args.device, weights_only=False)
         q0 = init_data["swarm_q"].to(args.device)
         p0 = init_data["swarm_p"].to(args.device)
+        m_s = init_data.get("swarm_masses", None)
+        if m_s is not None:
+            m_s = m_s.to(args.device)
         qm = init_data["mothers_q"].to(args.device)
         pm = init_data["mothers_p"].to(args.device)
         mm = init_data["mothers_masses"].to(args.device)
     else:
         q0 = data["swarm_final_q"].to(args.device)
         p0 = data["swarm_final_p"].to(args.device)
+        m_s = None
         qm = data["mothers_final_q"].to(args.device)
         pm = data["mothers_final_p"].to(args.device)
         mm = torch.tensor([[m.mass] for m in cfg.mother_stars], dtype=q0.dtype, device=args.device)
@@ -352,7 +356,8 @@ def cmd_train_model(args: argparse.Namespace) -> None:
                 t_b = esc_times[b_idx]
                 status_b = status[b_idx]
 
-                z_enc = model.encoder(q_b, p_b, qm, pm, mm)
+                m_b = m_s[b_idx] if m_s is not None else None
+                z_enc = model.encoder(q_b, p_b, qm, pm, mm, m_s=m_b)
                 z_symp = model.poincare_jump(z_enc)
                 loss_dict = model.survival_head.compute_loss(z_symp, t_b, status_b)
                 loss = loss_dict["loss"]
@@ -573,6 +578,7 @@ def cmd_evaluate_model(args: argparse.Namespace) -> None:
     time_bins = model.survival_head.bin_centers.to(args.device)
 
     print("[*] Executing Scientific Evaluation Engine across test population...")
+    ms = init_data.get('swarm_masses', None).to(args.device) if init_path.exists() and 'swarm_masses' in init_data else None
     eval_engine = ScientificEvaluationEngine(model)
     report = eval_engine.evaluate(
         q=q,
@@ -583,6 +589,7 @@ def cmd_evaluate_model(args: argparse.Namespace) -> None:
         true_event_times=true_times,
         true_terminal_status=true_status,
         time_bins=time_bins,
+        m_s=ms,
         n_rotations=args.n_rotations,
     )
 

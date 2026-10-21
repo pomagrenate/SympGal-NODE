@@ -125,18 +125,79 @@ class StellarCluster:
         z = rng.normal(0.0, z_scale, size=n)
         return np.stack([x, y, z], axis=-1)
 
+    def _sample_imf_masses(
+        self, n: int, imf_type: str, m_min: float, m_max: float, total_mass: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        """
+        Sample stellar masses from an astrophysical Initial Mass Function (IMF):
+        1. Kroupa (2001) broken power-law:
+           xi(m) ~ m^(-1.3) for 0.08 <= m < 0.5 M_sun
+           xi(m) ~ m^(-2.3) for 0.5 <= m <= m_max
+        2. Salpeter (1955) power-law:
+           xi(m) ~ m^(-2.35)
+        3. Uniform / Equal mass:
+           m_i = total_mass / n
+        """
+        if imf_type.lower() == "salpeter":
+            alpha = 2.35
+            u = rng.uniform(0.0, 1.0, size=n)
+            # Inverse CDF of m^(-alpha)
+            exp = 1.0 - alpha
+            masses = (m_min**exp + u * (m_max**exp - m_min**exp)) ** (1.0 / exp)
+        elif imf_type.lower() == "kroupa":
+            # Probability in low-mass vs high-mass regimes
+            # f1(m) = c1 * m^(-1.3), 0.08 <= m < 0.5
+            # f2(m) = c2 * m^(-2.3), 0.5 <= m <= m_max
+            # Continuity at 0.5: c1 * 0.5^(-1.3) = c2 * 0.5^(-2.3) => c2 = c1 * 0.5
+            c1 = 1.0
+            c2 = c1 * 0.5
+            int1 = (c1 / (1.0 - 1.3)) * (0.5**(1.0 - 1.3) - m_min**(1.0 - 1.3))
+            int2 = (c2 / (1.0 - 2.3)) * (m_max**(1.0 - 2.3) - 0.5**(1.0 - 2.3))
+            p1 = int1 / (int1 + int2)
+
+            u = rng.uniform(0.0, 1.0, size=n)
+            masses = np.zeros(n)
+            mask1 = u < p1
+            mask2 = ~mask1
+
+            # Regime 1: 0.08 <= m < 0.5
+            u1 = u[mask1] / p1
+            exp1 = 1.0 - 1.3
+            masses[mask1] = (m_min**exp1 + u1 * (0.5**exp1 - m_min**exp1)) ** (1.0 / exp1)
+
+            # Regime 2: 0.5 <= m <= m_max
+            u2 = (u[mask2] - p1) / (1.0 - p1)
+            exp2 = 1.0 - 2.3
+            masses[mask2] = (0.5**exp2 + u2 * (m_max**exp2 - 0.5**exp2)) ** (1.0 / exp2)
+        else:
+            masses = np.ones(n)
+
+        # Normalize total swarm mass
+        masses = masses / np.sum(masses) * total_mass
+        return masses
+
     def _sample_velocities(
         self,
         positions: np.ndarray,
         v_disp: float,
+        masses: np.ndarray,
         rng: np.random.Generator,
         is_disk: bool = False,
+        equipartition: bool = True,
     ) -> np.ndarray:
         """
-        Sample velocity vectors: Keplerian rotation + isotropic velocity dispersion.
+        Sample velocity vectors with energy equipartition: sigma_v_i ~ (m_mean / m_i)^0.5.
+        Massive stars move slower and sink (mass segregation), light stars move faster.
         """
         n = len(positions)
-        v_random = rng.normal(0.0, v_disp, size=(n, 3))
+        if equipartition:
+            m_mean = np.mean(masses)
+            scale = np.sqrt(m_mean / np.maximum(masses, 1e-7))
+            scale = np.clip(scale, 0.2, 5.0).reshape(n, 1)
+        else:
+            scale = 1.0
+
+        v_random = rng.normal(0.0, v_disp, size=(n, 3)) * scale
 
         if is_disk:
             # Add circular azimuthal velocity v_phi ~ sqrt(G * M_tot / R)
@@ -155,12 +216,23 @@ class StellarCluster:
 
     def _init_swarm_particles(self) -> PhaseSpaceState:
         """
-        Build PhaseSpaceState for N child swarm particles.
+        Build PhaseSpaceState for N child swarm particles with realistic mass spectrum.
         """
         swarm_cfg = self.config.swarm
         rng = np.random.default_rng(swarm_cfg.seed)
         n = swarm_cfg.n_particles
 
+        # 1. Sample realistic stellar masses (Kroupa IMF by default)
+        masses_np = self._sample_imf_masses(
+            n=n,
+            imf_type=getattr(swarm_cfg, "imf_type", "kroupa"),
+            m_min=getattr(swarm_cfg, "imf_m_min", 0.08),
+            m_max=getattr(swarm_cfg, "imf_m_max", 50.0),
+            total_mass=getattr(swarm_cfg, "total_swarm_mass", 0.5),
+            rng=rng,
+        )
+
+        # 2. Sample positions
         if swarm_cfg.distribution == "disk":
             q_np = self._sample_disk_positions(
                 n,
@@ -170,19 +242,31 @@ class StellarCluster:
                 rng=rng,
             )
             p_np = self._sample_velocities(
-                q_np, swarm_cfg.velocity_dispersion, rng=rng, is_disk=True
+                q_np,
+                swarm_cfg.velocity_dispersion,
+                masses=masses_np,
+                rng=rng,
+                is_disk=True,
+                equipartition=getattr(swarm_cfg, "equipartition", True),
             )
         else:
             q_np = self._sample_plummer_positions(
                 n, a=swarm_cfg.cluster_radius, rng=rng
             )
             p_np = self._sample_velocities(
-                q_np, swarm_cfg.velocity_dispersion, rng=rng, is_disk=False
+                q_np,
+                swarm_cfg.velocity_dispersion,
+                masses=masses_np,
+                rng=rng,
+                is_disk=False,
+                equipartition=getattr(swarm_cfg, "equipartition", True),
             )
 
         q = torch.tensor(q_np, dtype=self.dtype, device=self.device)
-        p = torch.tensor(p_np, dtype=self.dtype, device=self.device)
-        masses = torch.ones((n, 1), dtype=self.dtype, device=self.device) * (1.0 / n)
+        # Canonical momentum p = m * v
+        p_canonical = p_np * masses_np.reshape(-1, 1)
+        p = torch.tensor(p_canonical, dtype=self.dtype, device=self.device)
+        masses = torch.tensor(masses_np, dtype=self.dtype, device=self.device).reshape(n, 1)
         names = [f"child_{i:06d}" for i in range(n)]
 
         return PhaseSpaceState(

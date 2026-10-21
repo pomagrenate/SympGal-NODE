@@ -60,11 +60,12 @@ class RelativisticGeometricInvariantEncoder(nn.Module):
         q_m: torch.Tensor,
         p_m: torch.Tensor,
         m_m: torch.Tensor,
+        m_s: Optional[torch.Tensor] = None,
         G: float = 1.0,
         c: float = 50.0,
     ) -> torch.Tensor:
         """
-        Compute 9 SO(3)-invariant scalar features between N test particles and K mother stars:
+        Compute SO(3)-invariant scalar features between N test particles and K mother stars:
         1. ||d_ij|| = Euclidean distance
         2. ||v_ij|| = Relative velocity magnitude
         3. (d_ij . v_ij) / (||d_ij|| + eps) = Normalized radial velocity
@@ -74,7 +75,9 @@ class RelativisticGeometricInvariantEncoder(nn.Module):
         7. M_j = Mother star mass
         8. ||q_i|| = Barycentric radius of test particle
         9. ||p_i|| = Barycentric speed of test particle
-        Returns shape (N, K, 9).
+        10. m_i = Individual stellar particle mass (Kroupa IMF)
+        11. M_j / m_i = Mass discrepancy ratio between primary and swarm star
+        Returns shape (N, K, 11) or (N, K, 9) if in_features == 9.
         """
         N = q.shape[0]
         K = q_m.shape[0]
@@ -100,13 +103,11 @@ class RelativisticGeometricInvariantEncoder(nn.Module):
         ang_mom_mag = torch.norm(ang_mom, dim=-1, keepdim=True)
 
         # 5. Local 1PN potential depth: (N, K, 1)
-        # Phi_1PN = - G * M_j * ||d x v||^2 / (c^2 * ||d||^3)
         m_j = m_m.view(1, K, 1).expand(N, -1, -1)
         d_cubed = d_sq * torch.sqrt(d_sq)
         phi_1pn = -(G * m_j * (ang_mom_mag**2)) / ((c**2 + 1e-6) * d_cubed)
 
         # 6. Local quadrupole tidal strain: T_ab = G * M_j / d^3
-        # Frobenius norm of tidal tensor: ||T||_F = sqrt(6) * G * M_j / d^3
         tidal_strain = (np.sqrt(6.0) * G * m_j) / d_cubed
 
         # 7. Mass: (N, K, 1) already m_j
@@ -115,10 +116,18 @@ class RelativisticGeometricInvariantEncoder(nn.Module):
         r_bary = torch.norm(q, dim=-1, keepdim=True).unsqueeze(1).expand(-1, K, -1)
         v_bary = torch.norm(p, dim=-1, keepdim=True).unsqueeze(1).expand(-1, K, -1)
 
-        invariants = torch.cat(
-            [d_norm, v_norm, radial_v, ang_mom_mag, phi_1pn, tidal_strain, m_j, r_bary, v_bary],
-            dim=-1,
-        )
+        inv_list = [d_norm, v_norm, radial_v, ang_mom_mag, phi_1pn, tidal_strain, m_j, r_bary, v_bary]
+
+        # 10 & 11. Multi-scale mass discrepancy: m_i and (M_j / m_i)
+        if self.in_features >= 11:
+            if m_s is None:
+                m_s_val = torch.ones((N, 1, 1), device=q.device, dtype=q.dtype).expand(-1, K, -1) * (1.0 / N)
+            else:
+                m_s_val = m_s.view(N, 1, 1).expand(-1, K, -1)
+            mass_ratio = m_j / (m_s_val + 1e-12)
+            inv_list.extend([m_s_val, torch.log10(torch.clamp(mass_ratio, min=1.0))])
+
+        invariants = torch.cat(inv_list, dim=-1)
         return invariants
 
     def forward(
@@ -128,6 +137,7 @@ class RelativisticGeometricInvariantEncoder(nn.Module):
         q_m: torch.Tensor,
         p_m: torch.Tensor,
         m_m: torch.Tensor,
+        m_s: Optional[torch.Tensor] = None,
         G: float = 1.0,
         c: float = 50.0,
     ) -> torch.Tensor:
@@ -136,7 +146,7 @@ class RelativisticGeometricInvariantEncoder(nn.Module):
         Returns shape (N, hidden_dim).
         """
         # (N, K, in_features)
-        raw_inv = self.compute_invariants(q, p, q_m, p_m, m_m, G=G, c=c)
+        raw_inv = self.compute_invariants(q, p, q_m, p_m, m_m, m_s=m_s, G=G, c=c)
         edge_repr = self.edge_mlp(raw_inv)  # (N, K, hidden_dim)
 
         # Invariant attention weights over K mother stars
@@ -438,8 +448,9 @@ class SympGalNet(nn.Module):
         self.hidden_dim = self.config.hidden_dim
 
         # 1. Invariant Encoder
+        in_feat = getattr(self.config, "in_features", 11)
         self.encoder = RelativisticGeometricInvariantEncoder(
-            in_features=9, hidden_dim=self.hidden_dim
+            in_features=in_feat, hidden_dim=self.hidden_dim
         )
 
         # 2. Canonical Symplectic Poincaré Jump Operator
@@ -459,6 +470,7 @@ class SympGalNet(nn.Module):
         q_m: torch.Tensor,
         p_m: torch.Tensor,
         m_m: torch.Tensor,
+        m_s: Optional[torch.Tensor] = None,
         G: float = 1.0,
         c: float = 50.0,
     ) -> Dict[str, torch.Tensor]:
@@ -467,7 +479,7 @@ class SympGalNet(nn.Module):
         Returns prediction dictionary and latent representation.
         """
         # Step 1: Geometric Relativistic Invariant Encoding
-        z_enc = self.encoder(q, p, q_m, p_m, m_m, G=G, c=c)
+        z_enc = self.encoder(q, p, q_m, p_m, m_m, m_s=m_s, G=G, c=c)
 
         # Step 2: Canonical Symplectic Poincaré Jump
         z_symp = self.poincare_jump(z_enc)

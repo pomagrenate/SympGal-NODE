@@ -42,6 +42,8 @@ class ClusterTidalEscapeSimulator:
         r_tidal: float = 2.5,
         omega: float = 0.5,
         seed: int = 42,
+        enable_self_gravity: bool = True,
+        imf_type: str = "kroupa",
     ) -> None:
         self.n_stars = n_stars
         self.m_cluster = m_cluster
@@ -49,10 +51,43 @@ class ClusterTidalEscapeSimulator:
         self.r_tidal = r_tidal
         self.omega = omega
         self.seed = seed
+        self.enable_self_gravity = enable_self_gravity
+        self.imf_type = imf_type
         np.random.seed(seed)
 
+    def sample_imf_masses(self) -> np.ndarray:
+        """Sample stellar masses according to Kroupa (2001) Initial Mass Function."""
+        n = self.n_stars
+        rng = np.random.default_rng(self.seed)
+        m_min, m_max = 0.08, 30.0
+
+        if self.imf_type.lower() == "kroupa":
+            c1 = 1.0
+            c2 = c1 * 0.5
+            int1 = (c1 / (1.0 - 1.3)) * (0.5**(1.0 - 1.3) - m_min**(1.0 - 1.3))
+            int2 = (c2 / (1.0 - 2.3)) * (m_max**(1.0 - 2.3) - 0.5**(1.0 - 2.3))
+            p1 = int1 / (int1 + int2)
+
+            u = rng.uniform(0.0, 1.0, size=n)
+            masses = np.zeros(n)
+            mask1 = u < p1
+            mask2 = ~mask1
+
+            exp1 = 1.0 - 1.3
+            masses[mask1] = (m_min**exp1 + (u[mask1] / p1) * (0.5**exp1 - m_min**exp1)) ** (1.0 / exp1)
+
+            exp2 = 1.0 - 2.3
+            masses[mask2] = (0.5**exp2 + ((u[mask2] - p1) / (1.0 - p1)) * (m_max**exp2 - 0.5**exp2)) ** (1.0 / exp2)
+        else:
+            masses = np.ones(n)
+
+        # Normalize so total cluster stellar mass is 0.5 * m_cluster
+        masses = masses / np.sum(masses) * (0.5 * self.m_cluster)
+        return masses
+
     def initialize_plummer_cluster(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Sample positions and velocities from an isotropic Plummer sphere."""
+        """Sample positions, velocities, and Kroupa IMF masses with energy equipartition."""
+        self.masses = self.sample_imf_masses()
         # Positions
         s = np.random.uniform(0.01, 0.99, self.n_stars)
         r = self.r_scale / np.sqrt(s**(-2.0/3.0) - 1.0)
@@ -64,9 +99,11 @@ class ClusterTidalEscapeSimulator:
         z = r * np.sin(theta) * np.cos(phi) * 0.4  # Slightly flattened disk
         q0 = np.stack([x, y, z], axis=-1)
 
-        # Velocities: Maxwellian with Plummer escape velocity envelope
+        # Velocities: Energy equipartition sigma_v ~ 1 / sqrt(m)
         v_esc = np.sqrt(2.0 * self.m_cluster / np.sqrt(r**2 + self.r_scale**2))
-        v_mag = np.random.uniform(0.1, 0.85, self.n_stars) * v_esc
+        m_mean = np.mean(self.masses)
+        mass_scale = np.clip(np.sqrt(m_mean / self.masses), 0.3, 3.0)
+        v_mag = np.random.uniform(0.1, 0.75, self.n_stars) * v_esc * mass_scale
         v_theta = np.arccos(np.random.uniform(-1.0, 1.0, self.n_stars))
         v_phi = np.random.uniform(0.0, 2.0 * np.pi, self.n_stars)
 
@@ -110,6 +147,17 @@ class ClusterTidalEscapeSimulator:
             r_sq = np.sum(q_cur**2, axis=-1, keepdims=True)
             acc_cl = -self.m_cluster * q_cur / ((r_sq + self.r_scale**2) ** 1.5)
 
+            # Mutual self-gravity between swarm stars (tiled computation for N-body fidelity)
+            if self.enable_self_gravity and N <= 5000:
+                # Tiled N-body gravity with softening
+                dq = q_cur[:, None, :] - q_cur[None, :, :]  # (N, N, 3)
+                d_sq = np.sum(dq**2, axis=-1, keepdims=True) + 0.05**2  # (N, N, 1)
+                inv_dist_cube = 1.0 / (d_sq * np.sqrt(d_sq))
+                np.fill_diagonal(inv_dist_cube[:, :, 0], 0.0)
+                # acc_i = - sum_j G * m_j * (q_i - q_j) / d_ij^3
+                acc_self = -np.sum(dq * inv_dist_cube * self.masses[None, :, None], axis=1)
+                acc_cl = acc_cl + acc_self
+
             # Galactic tidal acceleration + Coriolis
             # ax = 2 Omega vy + alpha_tide * x
             # ay = -2 Omega vx
@@ -126,6 +174,14 @@ class ClusterTidalEscapeSimulator:
             # Recalculate acceleration at new positions
             r_sq_new = np.sum(q_cur**2, axis=-1, keepdims=True)
             acc_cl_new = -self.m_cluster * q_cur / ((r_sq_new + self.r_scale**2) ** 1.5)
+            if self.enable_self_gravity and N <= 5000:
+                dq_new = q_cur[:, None, :] - q_cur[None, :, :]
+                d_sq_new = np.sum(dq_new**2, axis=-1, keepdims=True) + 0.05**2
+                inv_dist_cube_new = 1.0 / (d_sq_new * np.sqrt(d_sq_new))
+                np.fill_diagonal(inv_dist_cube_new[:, :, 0], 0.0)
+                acc_self_new = -np.sum(dq_new * inv_dist_cube_new * self.masses[None, :, None], axis=1)
+                acc_cl_new = acc_cl_new + acc_self_new
+
             ax_new = acc_cl_new[:, 0] + 2.0 * self.omega * p_cur[:, 1] + alpha_tide * q_cur[:, 0]
             ay_new = acc_cl_new[:, 1] - 2.0 * self.omega * p_cur[:, 0]
             az_new = acc_cl_new[:, 2] - (self.omega ** 2) * q_cur[:, 2]

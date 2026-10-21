@@ -34,6 +34,8 @@ class RelativisticClusterPotential:
         self.plummer_scale = self.config.plummer_scale
         self.miyamoto_a = self.config.miyamoto_a
         self.miyamoto_b = self.config.miyamoto_b
+        self.enable_self_gravity = getattr(self.config, "enable_self_gravity", True)
+        self.self_gravity_chunk_size = getattr(self.config, "self_gravity_chunk_size", 4096)
 
     def background_density(self, q: torch.Tensor) -> torch.Tensor:
         """
@@ -111,6 +113,54 @@ class RelativisticClusterPotential:
         m = m_mothers.view(1, -1)  # (1, K)
         phi_per_star = -self.G * m / dist  # (N, K)
         return torch.sum(phi_per_star, dim=-1, keepdim=True)  # (N, 1)
+
+    def swarm_self_gravity_potential(
+        self, q: torch.Tensor, m_swarm: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Vectorized mutual gravitational potential between all N swarm particles:
+        Phi_{self}(q_i) = - sum_{k != i} [ G * m_k / sqrt(||q_i - q_k||^2 + eps^2) ]
+        Computes in tiled chunks to prevent CUDA/host OOM for large N.
+        Returns shape (N, 1).
+        """
+        if not self.enable_self_gravity or q.shape[0] <= 1:
+            return torch.zeros((q.shape[0], 1), device=q.device, dtype=q.dtype)
+
+        N = q.shape[0]
+        if m_swarm is None:
+            m_swarm = torch.ones((N, 1), device=q.device, dtype=q.dtype) * (1.0 / N)
+        else:
+            m_swarm = m_swarm.view(N, 1)
+
+        chunk_size = min(self.self_gravity_chunk_size, N)
+        phi_total = torch.zeros((N, 1), device=q.device, dtype=q.dtype)
+
+        # Tiled computation
+        for i_start in range(0, N, chunk_size):
+            i_end = min(i_start + chunk_size, N)
+            q_i = q[i_start:i_end]  # (B, 3)
+
+            phi_i = torch.zeros((i_end - i_start, 1), device=q.device, dtype=q.dtype)
+            for j_start in range(0, N, chunk_size):
+                j_end = min(j_start + chunk_size, N)
+                q_j = q[j_start:j_end]  # (M, 3)
+                m_j = m_swarm[j_start:j_end].view(1, -1)  # (1, M)
+
+                # Pairwise distance: (B, M)
+                dq = q_i.unsqueeze(1) - q_j.unsqueeze(0)
+                dist = torch.sqrt(torch.sum(dq**2, dim=-1) + self.eps**2)
+
+                # Subtract self-interaction if diagonal block
+                phi_block = -self.G * m_j / dist
+                if i_start == j_start:
+                    diag_mask = torch.eye(i_end - i_start, device=q.device, dtype=torch.bool)
+                    phi_block = torch.where(diag_mask, torch.zeros_like(phi_block), phi_block)
+
+                phi_i += torch.sum(phi_block, dim=-1, keepdim=True)
+
+            phi_total[i_start:i_end] = phi_i
+
+        return phi_total
 
     def mother_1pn_potential(
         self,
@@ -207,15 +257,18 @@ class RelativisticClusterPotential:
         q_mothers: torch.Tensor,
         p_mothers: torch.Tensor,
         m_mothers: torch.Tensor,
+        m_swarm: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Compute total effective potential energy Phi_total(q, p) for N particles.
+        Includes background, primary mother stars, 1PN relativistic terms, and mutual swarm self-gravity.
         Returns shape (N, 1).
         """
         phi_bg = self.background_potential(q)
         phi_newt = self.mother_newtonian_potential(q, q_mothers, m_mothers)
         phi_1pn = self.mother_1pn_potential(q, p, q_mothers, p_mothers, m_mothers)
-        return phi_bg + phi_newt + phi_1pn
+        phi_self = self.swarm_self_gravity_potential(q, m_swarm) if self.enable_self_gravity else 0.0
+        return phi_bg + phi_newt + phi_1pn + phi_self
 
     def hamiltonian(
         self,
@@ -224,14 +277,15 @@ class RelativisticClusterPotential:
         q_mothers: torch.Tensor,
         p_mothers: torch.Tensor,
         m_mothers: torch.Tensor,
+        m_swarm: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Total Hamiltonian for swarm particles (assuming unit specific mass):
+        Total Hamiltonian for swarm particles:
         H(q, p) = 0.5 * ||p||^2 + Phi_eff(q, p).
         Returns shape (N, 1).
         """
         kinetic = 0.5 * torch.sum(p**2, dim=-1, keepdim=True)
-        potential = self.effective_potential(q, p, q_mothers, p_mothers, m_mothers)
+        potential = self.effective_potential(q, p, q_mothers, p_mothers, m_mothers, m_swarm)
         return kinetic + potential
 
     def compute_hamiltonian_derivatives(
@@ -241,17 +295,18 @@ class RelativisticClusterPotential:
         q_mothers: torch.Tensor,
         p_mothers: torch.Tensor,
         m_mothers: torch.Tensor,
+        m_swarm: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute canonical flow derivatives:
         dq/dt = dH/dp
         dp/dt = -dH/dq
-        via PyTorch autograd for exact mathematical consistency with non-separable 1PN terms.
+        via PyTorch autograd for exact mathematical consistency with non-separable 1PN terms and self-gravity.
         """
         q_req = q.clone().detach().requires_grad_(True)
         p_req = p.clone().detach().requires_grad_(True)
 
-        H = self.hamiltonian(q_req, p_req, q_mothers, p_mothers, m_mothers)
+        H = self.hamiltonian(q_req, p_req, q_mothers, p_mothers, m_mothers, m_swarm)
         H_sum = torch.sum(H)
 
         dH_dq, dH_dp = torch.autograd.grad(H_sum, [q_req, p_req], create_graph=False)
@@ -262,31 +317,49 @@ class RelativisticClusterPotential:
         return dq_dt, dp_dt
 
     def compute_mother_accelerations(
-        self, q_mothers: torch.Tensor, p_mothers: torch.Tensor, m_mothers: torch.Tensor
+        self,
+        q_mothers: torch.Tensor,
+        p_mothers: torch.Tensor,
+        m_mothers: torch.Tensor,
+        q_swarm: Optional[torch.Tensor] = None,
+        m_swarm: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
-        Compute mutual gravitational accelerations between K mother stars:
-        a_j = sum_{k != j} -G * M_k * (q_j - q_k) / (||q_j - q_k||^2 + eps^2)^(3/2)
+        Compute mutual gravitational accelerations between K mother stars,
+        PLUS the gravitational back-reaction pull from all N swarm stars on the mother stars:
+        a_j = a_{mothers, j} + sum_i [ G * m_i * (q_i - q_j) / (||q_i - q_j||^2 + eps^2)^(3/2) ]
         plus 1PN mutual correction.
         Returns shape (K, 3).
         """
         K = q_mothers.shape[0]
-        if K <= 1:
+        if K <= 1 and (q_swarm is None or q_swarm.shape[0] == 0):
             return torch.zeros_like(q_mothers)
 
-        # Pairwise differences: (K, K, 3)
-        dq = q_mothers.unsqueeze(1) - q_mothers.unsqueeze(0)  # q_j - q_k
-        dist_sq = torch.sum(dq**2, dim=-1, keepdim=True) + self.eps**2  # (K, K, 1)
-        dist = torch.sqrt(dist_sq)
+        acc_total = torch.zeros_like(q_mothers)
 
-        # Newtonian acceleration
-        m = m_mothers.view(1, K, 1)  # (1, K, 1)
-        mask = (~torch.eye(K, device=q_mothers.device, dtype=torch.bool)).unsqueeze(-1)
-        acc_newt = -self.G * m * dq / (dist_sq * dist)  # (K, K, 3)
-        acc_newt = torch.where(mask, acc_newt, torch.zeros_like(acc_newt))
-        acc_total = torch.sum(acc_newt, dim=1)  # (K, 3)
+        # 1. Mother-Mother interaction
+        if K > 1:
+            dq = q_mothers.unsqueeze(1) - q_mothers.unsqueeze(0)  # q_j - q_k
+            dist_sq = torch.sum(dq**2, dim=-1, keepdim=True) + self.eps**2  # (K, K, 1)
+            dist = torch.sqrt(dist_sq)
 
-        # Mean field background acceleration at mother star positions
+            m = m_mothers.view(1, K, 1)  # (1, K, 1)
+            mask = (~torch.eye(K, device=q_mothers.device, dtype=torch.bool)).unsqueeze(-1)
+            acc_newt = -self.G * m * dq / (dist_sq * dist)  # (K, K, 3)
+            acc_newt = torch.where(mask, acc_newt, torch.zeros_like(acc_newt))
+            acc_total = acc_total + torch.sum(acc_newt, dim=1)
+
+        # 2. Swarm back-reaction pull on mother stars
+        if q_swarm is not None and m_swarm is not None and q_swarm.shape[0] > 0:
+            # dq_sm: (K, N, 3) = q_swarm.unsqueeze(0) - q_mothers.unsqueeze(1)
+            dq_sm = q_swarm.unsqueeze(0) - q_mothers.unsqueeze(1)
+            dist_sm_sq = torch.sum(dq_sm**2, dim=-1, keepdim=True) + self.eps**2  # (K, N, 1)
+            dist_sm = torch.sqrt(dist_sm_sq)
+            m_s = m_swarm.view(1, -1, 1)  # (1, N, 1)
+            acc_swarm_pull = torch.sum(self.G * m_s * dq_sm / (dist_sm_sq * dist_sm), dim=1)
+            acc_total = acc_total + acc_swarm_pull
+
+        # 3. Mean field background acceleration at mother star positions
         r_mothers_sq = torch.sum(q_mothers**2, dim=-1, keepdim=True)
         denom_bg = (r_mothers_sq + self.plummer_scale**2) ** 1.5
         acc_bg = -self.G * self.plummer_mass * q_mothers / denom_bg

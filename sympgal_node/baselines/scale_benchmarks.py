@@ -224,9 +224,10 @@ def run_comprehensive_scale_benchmarks():
                         cur_n = min(chunk_size, N - chunk_idx * chunk_size)
                         q_chunk = torch.randn(cur_n, 3, device=device)
                         p_chunk = torch.randn(cur_n, 3, device=device)
+                        m_chunk = torch.ones((cur_n, 1), device=device) * (0.5 / cur_n)
 
                         if "SympGal-NODE" in m_name:
-                            out = m_obj(q_chunk, p_chunk, q_m, p_m, m_m)
+                            out = m_obj(q_chunk, p_chunk, q_m, p_m, m_m, m_s=m_chunk)
                         elif "Bi-LSTM" in m_name or "PINO" in m_name:
                             # Feed temporal sequence
                             seq_batch = min(cur_n, 2048)

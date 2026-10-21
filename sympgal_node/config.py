@@ -35,6 +35,8 @@ class PotentialConfig:
     plummer_scale: float = 2.5         # Plummer scale radius b
     miyamoto_a: float = 0.0            # Miyamoto-Nagai radial scale a (0 = Plummer)
     miyamoto_b: float = 0.0            # Miyamoto-Nagai vertical scale b
+    enable_self_gravity: bool = True   # Enable mutual gravitational interaction between swarm members
+    self_gravity_chunk_size: int = 4096 # Vectorized tile chunk size to scale to N >= 10^5 without OOM
 
 
 @dataclass
@@ -44,6 +46,11 @@ class SwarmConfig:
     cluster_radius: float = 1.2        # Initial spatial dispersion radius
     velocity_dispersion: float = 0.25  # Maxwell-Boltzmann velocity dispersion
     distribution: str = "plummer"      # 'plummer', 'disk', or 'uniform'
+    imf_type: str = "kroupa"           # Stellar Initial Mass Function: 'kroupa', 'salpeter', or 'uniform'
+    imf_m_min: float = 0.08            # Minimum stellar mass in solar units M_sun
+    imf_m_max: float = 50.0            # Maximum stellar mass in solar units M_sun
+    total_swarm_mass: float = 0.5      # Total normalized mass of swarm relative to central mother stars
+    equipartition: bool = True         # Energy equipartition: sigma_v ~ m_i^(-0.5)
     disk_inner_radius: float = 0.4     # For circumbinary disk distribution
     disk_outer_radius: float = 2.0
     r_tidal: float = 5.0               # Tidal escape boundary radius
@@ -73,6 +80,7 @@ class ModelConfig:
     """Configuration for Equivariant GNN, Neural ODE, and Survival Head."""
     node_dim: int = 64
     edge_dim: int = 32
+    in_features: int = 11              # 9 original invariants + m_i + mass ratio (M_j / m_i)
     hidden_dim: int = 128
     num_layers: int = 3
     learning_rate: float = 1e-3

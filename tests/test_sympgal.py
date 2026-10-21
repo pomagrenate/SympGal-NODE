@@ -347,3 +347,42 @@ def test_scientific_metrics_zero_on_ground_truth_and_catches_degraded():
     bad_cls = classification_metrics(labels, torch.nn.functional.one_hot(flipped_labels, num_classes=3).float(), num_classes=3)
     assert np.isclose(bad_cls["macro_f1"], 0.0), f"Completely misclassified labels must have macro F1 = 0.0, got {bad_cls['macro_f1']}"
 
+
+def test_swarm_self_gravity_and_kroupa_imf():
+    """Verify mutual self-gravity between swarm stars and Kroupa IMF mass sampling."""
+    from sympgal_node.swarm.cluster import StellarCluster
+    from sympgal_node.config import SympGalConfig
+
+    cfg = SympGalConfig()
+    cfg.swarm.n_particles = 256
+    cfg.swarm.imf_type = "kroupa"
+    cfg.swarm.imf_m_min = 0.08
+    cfg.swarm.imf_m_max = 20.0
+    cfg.swarm.total_swarm_mass = 0.5
+    cfg.potential.enable_self_gravity = True
+
+    cluster = StellarCluster(cfg)
+    sw, mo = cluster.get_states()
+
+    # 1. Masses must have continuous non-uniform spectrum (IMF)
+    masses = sw.masses.squeeze().cpu().numpy()
+    assert np.min(masses) < np.max(masses), "IMF must produce non-uniform masses"
+    assert np.isclose(np.sum(masses), 0.5, atol=1e-4), "Total swarm mass must match configured total"
+
+    # 2. Potential with self-gravity must be more negative than without self-gravity
+    pot = RelativisticClusterPotential(cfg.potential)
+    phi_with_self = pot.effective_potential(sw.q, sw.p, mo.q, mo.p, mo.masses, m_swarm=sw.masses)
+    cfg.potential.enable_self_gravity = False
+    pot_no_self = RelativisticClusterPotential(cfg.potential)
+    phi_no_self = pot_no_self.effective_potential(sw.q, sw.p, mo.q, mo.p, mo.masses)
+
+    mean_diff = torch.mean(phi_no_self - phi_with_self).item()
+    assert mean_diff > 0.0, f"Mutual self-gravity must deepen potential well, diff={mean_diff}"
+
+    # 3. Mother stars must experience gravitational back-reaction acceleration from the swarm
+    acc_m_with_swarm = pot.compute_mother_accelerations(mo.q, mo.p, mo.masses, q_swarm=sw.q, m_swarm=sw.masses)
+    acc_m_isolated = pot.compute_mother_accelerations(mo.q, mo.p, mo.masses)
+    back_reaction_norm = torch.norm(acc_m_with_swarm - acc_m_isolated).item()
+    assert back_reaction_norm > 0.0, "Swarm must exert non-zero back-reaction pull on mother stars"
+
+
